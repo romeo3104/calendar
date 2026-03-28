@@ -107,22 +107,28 @@ def nth_weekday(year: int, month: int, weekday: int, nth: int) -> date:
 
 def vernal_equinox_day(year: int) -> int:
     """春分日の概算日を返します。"""
-    if not 2000 <= year <= 2099:
-        raise ValueError("春分日の計算対象は 2000年から2099年です。")
+    if not 1900 <= year <= 2099:
+        raise ValueError("春分日の計算対象は 1900年から2099年です。")
+
+    if year <= 1979:
+        return int(20.8357 + 0.242194 * (year - 1980) - ((year - 1983) // 4))
     return int(20.8431 + 0.242194 * (year - 1980) - ((year - 1980) // 4))
 
 
 def autumn_equinox_day(year: int) -> int:
     """秋分日の概算日を返します。"""
-    if not 2000 <= year <= 2099:
-        raise ValueError("秋分日の計算対象は 2000年から2099年です。")
+    if not 1900 <= year <= 2099:
+        raise ValueError("秋分日の計算対象は 1900年から2099年です。")
+
+    if year <= 1979:
+        return int(23.2588 + 0.242194 * (year - 1980) - ((year - 1983) // 4))
     return int(23.2488 + 0.242194 * (year - 1980) - ((year - 1980) // 4))
 
 
 def get_national_holidays(year: int) -> Dict[date, str]:
     """祝日法上の国民の祝日を返します。"""
-    if not 2000 <= year <= 2099:
-        raise ValueError("このカレンダーの祝日計算対象は 2000年から2099年です。")
+    if not 1949 <= year <= 2099:
+        raise ValueError("このカレンダーの祝日計算対象は 1949年から2099年です。")
 
     holidays: Dict[date, str] = {}
 
@@ -130,14 +136,28 @@ def get_national_holidays(year: int) -> Dict[date, str]:
         holidays[target_date] = name
 
     add_holiday(date(year, 1, 1), "元日")
-    add_holiday(nth_weekday(year, 1, 0, 2), "成人の日")
+
+    if year >= 2000:
+        add_holiday(nth_weekday(year, 1, 0, 2), "成人の日")
+    else:
+        add_holiday(date(year, 1, 15), "成人の日")
+
     add_holiday(date(year, 2, 11), "建国記念の日")
 
-    if year >= 2020:
+    if 1989 <= year <= 2018:
+        add_holiday(date(year, 12, 23), "天皇誕生日")
+    elif year >= 2020:
         add_holiday(date(year, 2, 23), "天皇誕生日")
 
     add_holiday(date(year, 3, vernal_equinox_day(year)), "春分の日")
-    add_holiday(date(year, 4, 29), "昭和の日" if year >= 2007 else "みどりの日")
+
+    if year >= 2007:
+        add_holiday(date(year, 4, 29), "昭和の日")
+    elif year >= 1989:
+        add_holiday(date(year, 4, 29), "みどりの日")
+    else:
+        add_holiday(date(year, 4, 29), "天皇誕生日")
+
     add_holiday(date(year, 5, 3), "憲法記念日")
 
     if year >= 2007:
@@ -151,7 +171,7 @@ def get_national_holidays(year: int) -> Dict[date, str]:
         add_holiday(date(year, 7, 22), "海の日")
     elif year >= 2003:
         add_holiday(nth_weekday(year, 7, 0, 3), "海の日")
-    else:
+    elif year >= 1996:
         add_holiday(date(year, 7, 20), "海の日")
 
     if year >= 2016:
@@ -162,7 +182,11 @@ def get_national_holidays(year: int) -> Dict[date, str]:
         else:
             add_holiday(date(year, 8, 11), "山の日")
 
-    add_holiday(nth_weekday(year, 9, 0, 3), "敬老の日")
+    if year >= 2003:
+        add_holiday(nth_weekday(year, 9, 0, 3), "敬老の日")
+    else:
+        add_holiday(date(year, 9, 15), "敬老の日")
+
     add_holiday(date(year, 9, autumn_equinox_day(year)), "秋分の日")
 
     if year == 2020:
@@ -171,8 +195,10 @@ def get_national_holidays(year: int) -> Dict[date, str]:
         add_holiday(date(year, 7, 23), "スポーツの日")
     elif year >= 2022:
         add_holiday(nth_weekday(year, 10, 0, 2), "スポーツの日")
-    else:
+    elif year >= 2000:
         add_holiday(nth_weekday(year, 10, 0, 2), "体育の日")
+    else:
+        add_holiday(date(year, 10, 10), "体育の日")
 
     add_holiday(date(year, 11, 3), "文化の日")
     add_holiday(date(year, 11, 23), "勤労感謝の日")
@@ -196,6 +222,7 @@ def get_citizens_holidays(national_holidays: Dict[date, str], year: int) -> Dict
             and previous_day in national_holidays
             and next_day in national_holidays
             and current.weekday() != 6
+            and year >= 1988
         ):
             citizens_holidays[current] = "国民の休日"
 
@@ -207,16 +234,26 @@ def get_citizens_holidays(national_holidays: Dict[date, str], year: int) -> Dict
 def get_substitute_holidays(
     national_holidays: Dict[date, str],
     existing_holidays: Dict[date, str],
+    year: int,
 ) -> Dict[date, str]:
     """振替休日を返します。"""
     substitute_holidays: Dict[date, str] = {}
     occupied_days = set(existing_holidays.keys())
+
+    if year < 1973:
+        return substitute_holidays
 
     for holiday_date in sorted(national_holidays.keys()):
         if holiday_date.weekday() != 6:
             continue
 
         candidate = holiday_date + timedelta(days=1)
+
+        if year < 2007:
+            if candidate not in occupied_days:
+                substitute_holidays[candidate] = "振替休日"
+            continue
+
         while candidate in occupied_days or candidate in substitute_holidays:
             candidate += timedelta(days=1)
 
@@ -234,7 +271,7 @@ def get_japanese_holidays(year: int) -> Dict[date, str]:
     all_holidays.update(national_holidays)
     all_holidays.update(citizens_holidays)
 
-    substitute_holidays = get_substitute_holidays(national_holidays, all_holidays)
+    substitute_holidays = get_substitute_holidays(national_holidays, all_holidays, year)
     all_holidays.update(substitute_holidays)
 
     return dict(sorted(all_holidays.items()))

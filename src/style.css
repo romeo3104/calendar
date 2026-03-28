@@ -6,12 +6,12 @@ body {
   margin: 0;
   padding: 24px;
   font-family: sans-serif;
-  background: #111827;
-  color: #f3f4f6;
+  background: #f8fafc;
+  color: #1f2937;
 }
 
 a {
-  color: #93c5fd;
+  color: #2563eb;
 }
 
 .page-header {
@@ -41,23 +41,23 @@ a {
   min-width: 72px;
   padding: 10px 18px;
   border-radius: 10px;
-  border: 1px solid #375a7f;
-  background: #0f172a;
-  color: #f8fafc;
+  border: 1px solid #cbd5e1;
+  background: #ffffff;
+  color: #1f2937;
   text-decoration: none;
   font-weight: 700;
   line-height: 1;
 }
 
 .year-nav-button:hover {
-  background: #172554;
+  background: #eff6ff;
   border-color: #60a5fa;
 }
 
 .year-nav-button.disabled {
-  color: #64748b;
-  background: #111827;
-  border-color: #334155;
+  color: #94a3b8;
+  background: #f8fafc;
+  border-color: #e2e8f0;
   pointer-events: none;
 }
 
@@ -68,24 +68,25 @@ a {
   min-width: 96px;
   padding: 10px 18px;
   border-radius: 10px;
-  border: 1px solid #4b5563;
-  background: #1f2937;
-  color: #f8fafc;
+  border: 1px solid #d1d5db;
+  background: #f3f4f6;
+  color: #111827;
   font-weight: 700;
   line-height: 1;
 }
 
 .year-nav-button.now {
-  background: #1d4ed8;
+  background: #2563eb;
   border-color: #60a5fa;
+  color: #ffffff;
 }
 
 .year-nav-button.now:hover {
-  background: #2563eb;
+  background: #1d4ed8;
 }
 
 .year-range-note {
-  color: #cbd5e1;
+  color: #475569;
   font-size: 14px;
 }
 
@@ -103,8 +104,8 @@ a {
 }
 
 .month {
-  background: #111417;
-  border: 1px solid #375a7f;
+  background: #ffffff;
+  border: 1px solid #cbd5e1;
   border-radius: 16px;
   padding: 16px;
   min-height: 420px;
@@ -120,7 +121,7 @@ a {
 
 .current-month {
   border: 2px solid #3b82f6;
-  box-shadow: 0 8px 24px rgba(59, 130, 246, 0.18);
+  box-shadow: 0 8px 24px rgba(59, 130, 246, 0.16);
 }
 
 .current-month h2 {
@@ -136,7 +137,7 @@ a {
 
 .calendar-table th,
 .calendar-table td {
-  border: 1px solid rgba(148, 163, 184, 0.22);
+  border: 1px solid rgba(148, 163, 184, 0.28);
   text-align: center;
   vertical-align: top;
   padding: 6px 4px;
@@ -144,7 +145,7 @@ a {
 }
 
 .calendar-table th {
-  background: rgba(255, 255, 255, 0.05);
+  background: #f1f5f9;
   padding: 8px 0;
   height: auto;
 }
@@ -166,7 +167,7 @@ a {
 }
 
 .today-link:hover {
-  background: rgba(255, 255, 255, 0.12);
+  background: rgba(59, 130, 246, 0.10);
 }
 
 .holiday-name {
@@ -177,19 +178,19 @@ a {
 }
 
 .sun {
-  color: #ff4d4f;
+  color: #dc2626;
 }
 
 .sat {
-  color: #4da3ff;
+  color: #2563eb;
 }
 
 .holiday {
-  color: #ff4d4f;
+  color: #dc2626;
 }
 
 .today {
-  background: rgba(245, 158, 11, 0.35);
+  background: rgba(245, 158, 11, 0.28);
   font-weight: bold;
   outline: 2px solid #f59e0b;
   outline-offset: -2px;
@@ -197,21 +198,22 @@ a {
 }
 
 .empty {
-  background: rgba(255, 255, 255, 0.02);
+  background: #f8fafc;
 }
 
 .summary-page {
-  background: #0b1220;
+  background: #f8fafc;
+  color: #1f2937;
 }
 
 .summary-meta {
   margin-top: 12px;
-  color: #cbd5e1;
+  color: #475569;
 }
 
 .summary-section {
-  background: #111827;
-  border: 1px solid rgba(148, 163, 184, 0.22);
+  background: #ffffff;
+  border: 1px solid rgba(148, 163, 184, 0.28);
   border-radius: 16px;
   padding: 20px;
   margin-bottom: 20px;
@@ -240,14 +242,14 @@ a {
 }
 
 .summary-card {
-  background: #111827;
-  border: 1px solid rgba(148, 163, 184, 0.22);
+  background: #ffffff;
+  border: 1px solid rgba(148, 163, 184, 0.28);
   border-radius: 16px;
   padding: 18px;
 }
 
 .summary-card-title {
-  color: #cbd5e1;
+  color: #475569;
   font-size: 14px;
   margin-bottom: 10px;
 }
@@ -259,7 +261,7 @@ a {
 }
 
 .summary-card-change {
-  color: #cbd5e1;
+  color: #475569;
   font-size: 14px;
 }
 
@@ -274,13 +276,13 @@ a {
 
 .summary-table th,
 .summary-table td {
-  border-bottom: 1px solid rgba(148, 163, 184, 0.16);
+  border-bottom: 1px solid rgba(148, 163, 184, 0.22);
   padding: 12px 10px;
   text-align: left;
 }
 
 .summary-table th {
-  color: #cbd5e1;
+  color: #475569;
 }
 
 .summary-news-list {
