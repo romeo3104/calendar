@@ -6,7 +6,8 @@ on:
       - main
   workflow_dispatch:
   schedule:
-    - cron: '5 15 * * *'
+    - cron: '10 20 * * 1-5'
+    - cron: '10 21 * * 1-5'
 
 permissions:
   contents: read
@@ -30,11 +31,30 @@ jobs:
         with:
           python-version: '3.12'
 
+      - name: 依存関係インストール
+        run: |
+          python -m pip install --upgrade pip
+          pip install yfinance requests
+
       - name: カレンダー生成
         env:
           TZ: Asia/Tokyo
         run: |
           python scripts/build_calendar.py
+
+      - name: 世界経済サマリー生成（push / 手動）
+        if: github.event_name != 'schedule'
+        env:
+          TZ: Asia/Tokyo
+        run: |
+          python scripts/build_world_summary.py --force
+
+      - name: 世界経済サマリー生成（定期）
+        if: github.event_name == 'schedule'
+        env:
+          TZ: Asia/Tokyo
+        run: |
+          python scripts/build_world_summary.py
 
       - name: Pages 設定
         uses: actions/configure-pages@v5

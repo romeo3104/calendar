@@ -10,6 +10,10 @@ body {
   color: #f3f4f6;
 }
 
+a {
+  color: #93c5fd;
+}
+
 .page-header {
   margin-bottom: 24px;
 }
@@ -125,6 +129,21 @@ body {
   line-height: 1.2;
 }
 
+.today-link {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 28px;
+  min-height: 28px;
+  border-radius: 9999px;
+  text-decoration: none;
+  color: inherit;
+}
+
+.today-link:hover {
+  background: rgba(255, 255, 255, 0.12);
+}
+
 .holiday-name {
   margin-top: 4px;
   font-size: 10px;
@@ -149,15 +168,113 @@ body {
   font-weight: bold;
   outline: 2px solid #f59e0b;
   outline-offset: -2px;
+  cursor: pointer;
 }
 
 .empty {
   background: rgba(255, 255, 255, 0.02);
 }
 
+.summary-page {
+  background: #0b1220;
+}
+
+.summary-meta {
+  margin-top: 12px;
+  color: #cbd5e1;
+}
+
+.summary-section {
+  background: #111827;
+  border: 1px solid rgba(148, 163, 184, 0.22);
+  border-radius: 16px;
+  padding: 20px;
+  margin-bottom: 20px;
+}
+
+.summary-section h2 {
+  margin: 0 0 14px;
+  font-size: 22px;
+}
+
+.summary-bullets {
+  margin: 0;
+  padding-left: 20px;
+}
+
+.summary-bullets li {
+  margin-bottom: 10px;
+  line-height: 1.7;
+}
+
+.summary-cards-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(220px, 1fr));
+  gap: 16px;
+  margin-bottom: 20px;
+}
+
+.summary-card {
+  background: #111827;
+  border: 1px solid rgba(148, 163, 184, 0.22);
+  border-radius: 16px;
+  padding: 18px;
+}
+
+.summary-card-title {
+  color: #cbd5e1;
+  font-size: 14px;
+  margin-bottom: 10px;
+}
+
+.summary-card-value {
+  font-size: 28px;
+  font-weight: 700;
+  margin-bottom: 8px;
+}
+
+.summary-card-change {
+  color: #cbd5e1;
+  font-size: 14px;
+}
+
+.summary-table-wrap {
+  overflow-x: auto;
+}
+
+.summary-table {
+  width: 100%;
+  border-collapse: collapse;
+}
+
+.summary-table th,
+.summary-table td {
+  border-bottom: 1px solid rgba(148, 163, 184, 0.16);
+  padding: 12px 10px;
+  text-align: left;
+}
+
+.summary-table th {
+  color: #cbd5e1;
+}
+
+.summary-news-list {
+  margin: 0;
+  padding-left: 20px;
+}
+
+.summary-news-list li {
+  margin-bottom: 10px;
+  line-height: 1.6;
+}
+
 @media (max-width: 1200px) {
   .months-grid {
     grid-template-columns: repeat(2, minmax(300px, 1fr));
+  }
+
+  .summary-cards-grid {
+    grid-template-columns: repeat(2, minmax(220px, 1fr));
   }
 }
 
@@ -171,7 +288,8 @@ body {
     align-items: flex-start;
   }
 
-  .months-grid {
+  .months-grid,
+  .summary-cards-grid {
     grid-template-columns: 1fr;
   }
 
