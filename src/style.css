@@ -6,8 +6,8 @@ body {
   margin: 0;
   padding: 24px;
   font-family: sans-serif;
-  background: #f5f7fb;
-  color: #222;
+  background: #111827;
+  color: #f3f4f6;
 }
 
 .page-header {
@@ -35,28 +35,28 @@ body {
   min-width: 72px;
   padding: 10px 18px;
   border-radius: 10px;
-  border: 1px solid #cbd5e1;
-  background: #ffffff;
-  color: #1e293b;
+  border: 1px solid #375a7f;
+  background: #0f172a;
+  color: #f8fafc;
   text-decoration: none;
   font-weight: 700;
   line-height: 1;
 }
 
 .year-nav-button:hover {
-  background: #eff6ff;
+  background: #172554;
   border-color: #60a5fa;
 }
 
 .year-nav-button.disabled {
-  color: #94a3b8;
-  background: #f8fafc;
-  border-color: #e2e8f0;
+  color: #64748b;
+  background: #111827;
+  border-color: #334155;
   pointer-events: none;
 }
 
 .year-range-note {
-  color: #475569;
+  color: #cbd5e1;
   font-size: 14px;
 }
 
@@ -70,14 +70,17 @@ body {
   display: grid;
   grid-template-columns: repeat(3, minmax(320px, 1fr));
   gap: 16px;
-  align-items: start;
+  align-items: stretch;
 }
 
 .month {
-  background: #fff;
-  border: 1px solid #d9e0ea;
-  border-radius: 12px;
+  background: #111417;
+  border: 1px solid #375a7f;
+  border-radius: 16px;
   padding: 16px;
+  min-height: 420px;
+  display: flex;
+  flex-direction: column;
 }
 
 .month h2 {
@@ -87,7 +90,6 @@ body {
 }
 
 .current-month {
-  transform: scale(1.03);
   border: 2px solid #3b82f6;
   box-shadow: 0 8px 24px rgba(59, 130, 246, 0.18);
 }
@@ -100,11 +102,12 @@ body {
   width: 100%;
   border-collapse: collapse;
   table-layout: fixed;
+  flex: 1;
 }
 
 .calendar-table th,
 .calendar-table td {
-  border: 1px solid #e5e7eb;
+  border: 1px solid rgba(148, 163, 184, 0.22);
   text-align: center;
   vertical-align: top;
   padding: 6px 4px;
@@ -112,7 +115,7 @@ body {
 }
 
 .calendar-table th {
-  background: #f1f5f9;
+  background: rgba(255, 255, 255, 0.05);
   padding: 8px 0;
   height: auto;
 }
@@ -130,26 +133,26 @@ body {
 }
 
 .sun {
-  color: #dc2626;
+  color: #ff4d4f;
 }
 
 .sat {
-  color: #2563eb;
+  color: #4da3ff;
 }
 
 .holiday {
-  color: #dc2626;
+  color: #ff4d4f;
 }
 
 .today {
-  background: #fde68a;
+  background: rgba(245, 158, 11, 0.35);
   font-weight: bold;
   outline: 2px solid #f59e0b;
   outline-offset: -2px;
 }
 
 .empty {
-  background: #f8fafc;
+  background: rgba(255, 255, 255, 0.02);
 }
 
 @media (max-width: 1200px) {
@@ -170,6 +173,10 @@ body {
 
   .months-grid {
     grid-template-columns: 1fr;
+  }
+
+  .month {
+    min-height: auto;
   }
 
   .calendar-table th,
