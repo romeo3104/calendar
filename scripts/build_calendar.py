@@ -1,6 +1,22 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 
+"""
+GitHub Pages 用の年カレンダーを静的生成するスクリプトです。
+
+要件:
+- 1990年から2050年までのページを生成
+- 当日を強調表示
+- 当月を他の月より見やすく表示
+- 日本の祝日を表示
+- 年タイトルに和暦と干支を表示
+- 月タイトルに英語名と和風月名を表示
+- 前年 / 次年 / 今 ボタンを表示
+- 前 / 次 ボタンの間に表示中の年を表示
+- 各月パネルの高さを揃えるため、常に 6 週分を描画
+- favicon を dist 配下へコピーして head に埋め込む
+"""
+
 from __future__ import annotations
 
 import calendar
@@ -23,7 +39,9 @@ SRC_STYLE_PATH = SRC_DIR / "style.css"
 DIST_DIR = ROOT_DIR / "dist"
 DIST_STYLE_PATH = DIST_DIR / "style.css"
 
-YEAR_RANGE = 20
+MIN_YEAR = 1990
+MAX_YEAR = 2050
+CURRENT_YEAR_LINK_LABEL = "今"
 
 MONTH_LABELS = {
     1: ("January", "睦月"),
@@ -63,10 +81,15 @@ FAVICON_CANDIDATES = [
 
 
 def setup_logging() -> None:
-    logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
+    """ログ設定を初期化します。"""
+    logging.basicConfig(
+        level=logging.INFO,
+        format="%(asctime)s %(levelname)s %(name)s: %(message)s",
+    )
 
 
 def nth_weekday(year: int, month: int, weekday: int, nth: int) -> date:
+    """指定年月の第 n 週の曜日の日付を返します。"""
     if nth < 1:
         raise ValueError("nth は 1 以上である必要があります。")
 
@@ -83,18 +106,21 @@ def nth_weekday(year: int, month: int, weekday: int, nth: int) -> date:
 
 
 def vernal_equinox_day(year: int) -> int:
+    """春分日の概算日を返します。"""
     if not 2000 <= year <= 2099:
         raise ValueError("春分日の計算対象は 2000年から2099年です。")
     return int(20.8431 + 0.242194 * (year - 1980) - ((year - 1980) // 4))
 
 
 def autumn_equinox_day(year: int) -> int:
+    """秋分日の概算日を返します。"""
     if not 2000 <= year <= 2099:
         raise ValueError("秋分日の計算対象は 2000年から2099年です。")
     return int(23.2488 + 0.242194 * (year - 1980) - ((year - 1980) // 4))
 
 
 def get_national_holidays(year: int) -> Dict[date, str]:
+    """祝日法上の国民の祝日を返します。"""
     if not 2000 <= year <= 2099:
         raise ValueError("このカレンダーの祝日計算対象は 2000年から2099年です。")
 
@@ -150,17 +176,21 @@ def get_national_holidays(year: int) -> Dict[date, str]:
 
     add_holiday(date(year, 11, 3), "文化の日")
     add_holiday(date(year, 11, 23), "勤労感謝の日")
+
     return holidays
 
 
 def get_citizens_holidays(national_holidays: Dict[date, str], year: int) -> Dict[date, str]:
+    """国民の休日を返します。"""
     citizens_holidays: Dict[date, str] = {}
+
     current = date(year, 1, 2)
     end_date = date(year, 12, 30)
 
     while current <= end_date:
         previous_day = current - timedelta(days=1)
         next_day = current + timedelta(days=1)
+
         if (
             current not in national_holidays
             and previous_day in national_holidays
@@ -168,36 +198,50 @@ def get_citizens_holidays(national_holidays: Dict[date, str], year: int) -> Dict
             and current.weekday() != 6
         ):
             citizens_holidays[current] = "国民の休日"
+
         current += timedelta(days=1)
+
     return citizens_holidays
 
 
-def get_substitute_holidays(national_holidays: Dict[date, str], existing_holidays: Dict[date, str]) -> Dict[date, str]:
+def get_substitute_holidays(
+    national_holidays: Dict[date, str],
+    existing_holidays: Dict[date, str],
+) -> Dict[date, str]:
+    """振替休日を返します。"""
     substitute_holidays: Dict[date, str] = {}
     occupied_days = set(existing_holidays.keys())
 
     for holiday_date in sorted(national_holidays.keys()):
         if holiday_date.weekday() != 6:
             continue
+
         candidate = holiday_date + timedelta(days=1)
         while candidate in occupied_days or candidate in substitute_holidays:
             candidate += timedelta(days=1)
+
         substitute_holidays[candidate] = "振替休日"
 
     return substitute_holidays
 
 
 def get_japanese_holidays(year: int) -> Dict[date, str]:
+    """表示用の日本の祝日一覧を返します。"""
     national_holidays = get_national_holidays(year)
     citizens_holidays = get_citizens_holidays(national_holidays, year)
+
     all_holidays: Dict[date, str] = {}
     all_holidays.update(national_holidays)
     all_holidays.update(citizens_holidays)
-    all_holidays.update(get_substitute_holidays(national_holidays, all_holidays))
+
+    substitute_holidays = get_substitute_holidays(national_holidays, all_holidays)
+    all_holidays.update(substitute_holidays)
+
     return dict(sorted(all_holidays.items()))
 
 
 def get_era_label(year: int) -> str:
+    """西暦年から和暦表記を返します。"""
     if year >= 2019:
         return f"令和{year - 2018}年"
     if year >= 1989:
@@ -208,26 +252,31 @@ def get_era_label(year: int) -> str:
 
 
 def get_zodiac_label(year: int) -> str:
+    """西暦年から干支表記を返します。"""
     kanji, reading = ZODIAC_LABELS[(year - 2020) % 12]
     return f"{kanji}年[{reading}年]"
 
 
 def get_year_title(year: int) -> str:
+    """年タイトルを返します。"""
     return f"{year}年（{get_era_label(year)}）{get_zodiac_label(year)}カレンダー"
 
 
 def get_month_title(month: int) -> str:
+    """月タイトルを返します。"""
     english_name, japanese_name = MONTH_LABELS[month]
     return f"{english_name} ({japanese_name})"
 
 
 def build_today_link(current_date: date, today: date) -> str:
+    """当日だけ世界経済サマリーへのリンクを付けます。"""
     if current_date == today:
         return f'<a class="today-link" href="summary/latest.html" aria-label="世界経済サマリーを表示">{current_date.day}</a>'
     return str(current_date.day)
 
 
 def build_day_cell(current_date: date, today: date, holidays: Dict[date, str]) -> str:
+    """日付セルの HTML を生成します。"""
     classes = []
     holiday_name = holidays.get(current_date)
 
@@ -255,6 +304,7 @@ def build_day_cell(current_date: date, today: date, holidays: Dict[date, str]) -
 
 
 def normalize_weeks(weeks: list[list[int]]) -> list[list[int]]:
+    """月の週配列を 6 週分に揃えます。"""
     normalized = list(weeks)
     while len(normalized) < 6:
         normalized.append([0, 0, 0, 0, 0, 0, 0])
@@ -262,9 +312,14 @@ def normalize_weeks(weeks: list[list[int]]) -> list[list[int]]:
 
 
 def build_month(year: int, month: int, today: date, holidays: Dict[date, str]) -> str:
+    """1か月分の HTML を生成します。"""
     cal = calendar.Calendar(firstweekday=6)
     month_class = "month current-month" if year == today.year and month == today.month else "month"
-    rows = [f'<section class="{month_class}">', f"<h2>{get_month_title(month)}</h2>", '<table class="calendar-table">']
+
+    rows = []
+    rows.append(f'<section class="{month_class}">')
+    rows.append(f"<h2>{get_month_title(month)}</h2>")
+    rows.append('<table class="calendar-table">')
     rows.append(
         "<thead><tr>"
         "<th class='sun'>日</th>"
@@ -284,25 +339,44 @@ def build_month(year: int, month: int, today: date, holidays: Dict[date, str]) -
             if day == 0:
                 rows.append('<td class="empty"></td>')
                 continue
+
             current_date = date(year, month, day)
             rows.append(build_day_cell(current_date, today, holidays))
         rows.append("</tr>")
 
-    rows.extend(["</tbody>", "</table>", "</section>"])
+    rows.append("</tbody>")
+    rows.append("</table>")
+    rows.append("</section>")
+
     return "\n".join(rows)
 
 
 def get_year_filename(year: int) -> str:
+    """年ページのファイル名を返します。"""
     return f"{year}.html"
 
 
 def build_nav_button(label: str, target_year: Optional[int], css_class: str) -> str:
+    """年移動ボタンの HTML を返します。"""
     if target_year is None:
         return f'<span class="year-nav-button disabled {css_class}">{label}</span>'
     return f'<a class="year-nav-button {css_class}" href="{html.escape(get_year_filename(target_year))}">{label}</a>'
 
 
+def build_current_year_chip(year: int) -> str:
+    """現在表示中の年ラベルを返します。"""
+    return f'<span class="current-year-chip">{year}年</span>'
+
+
+def build_now_button(current_real_year: int, viewing_year: int) -> str:
+    """今ボタンの HTML を返します。"""
+    if viewing_year == current_real_year:
+        return f'<span class="year-nav-button disabled now">{CURRENT_YEAR_LINK_LABEL}</span>'
+    return f'<a class="year-nav-button now" href="{html.escape(get_year_filename(current_real_year))}">{CURRENT_YEAR_LINK_LABEL}</a>'
+
+
 def build_favicon_links() -> str:
+    """favicon 用 link 要素を返します。"""
     lines = []
     for filename, mime_type in FAVICON_CANDIDATES:
         path = SRC_DIR / filename
@@ -311,10 +385,11 @@ def build_favicon_links() -> str:
     return "\n".join(lines)
 
 
-def build_html(year: int, today: date, holidays: Dict[date, str], min_year: int, max_year: int) -> str:
+def build_html(year: int, today: date, holidays: Dict[date, str], current_real_year: int) -> str:
+    """ページ全体の HTML を生成します。"""
     months_html = "\n".join(build_month(year, month, today, holidays) for month in range(1, 13))
-    previous_year = year - 1 if year > min_year else None
-    next_year = year + 1 if year < max_year else None
+    previous_year = year - 1 if year > MIN_YEAR else None
+    next_year = year + 1 if year < MAX_YEAR else None
     favicon_links = build_favicon_links()
     head_favicon_block = f"\n{favicon_links}" if favicon_links else ""
 
@@ -331,9 +406,11 @@ def build_html(year: int, today: date, holidays: Dict[date, str], min_year: int,
     <div class="page-header-top">
       <div class="year-nav">
         {build_nav_button("前", previous_year, "prev")}
+        {build_current_year_chip(year)}
         {build_nav_button("次", next_year, "next")}
+        {build_now_button(current_real_year, year)}
       </div>
-      <div class="year-range-note">{min_year}年〜{max_year}年を表示できます</div>
+      <div class="year-range-note">{MIN_YEAR}年〜{MAX_YEAR}年を表示できます</div>
     </div>
     <h1>{html.escape(get_year_title(year))}</h1>
   </header>
@@ -346,6 +423,7 @@ def build_html(year: int, today: date, holidays: Dict[date, str], min_year: int,
 
 
 def copy_static_assets() -> None:
+    """CSS と favicon を dist 配下へコピーします。"""
     if not SRC_STYLE_PATH.exists():
         raise FileNotFoundError(f"CSS ファイルが見つかりません: {SRC_STYLE_PATH}")
 
@@ -357,34 +435,41 @@ def copy_static_assets() -> None:
             shutil.copy2(source_path, DIST_DIR / filename)
 
 
-def write_output_files(current_year: int, html_by_year: Dict[int, str]) -> None:
+def write_output_files(current_real_year: int, html_by_year: Dict[int, str]) -> None:
+    """生成した HTML と静的ファイルを dist 配下へ出力します。"""
     if DIST_DIR.exists():
         shutil.rmtree(DIST_DIR)
+
     DIST_DIR.mkdir(parents=True, exist_ok=True)
     copy_static_assets()
 
     for year, html_text in html_by_year.items():
         (DIST_DIR / get_year_filename(year)).write_text(html_text, encoding="utf-8")
-    (DIST_DIR / "index.html").write_text(html_by_year[current_year], encoding="utf-8")
+
+    (DIST_DIR / "index.html").write_text(html_by_year[current_real_year], encoding="utf-8")
 
 
 def main() -> int:
+    """エントリーポイントです。"""
     setup_logging()
+
     try:
         now = datetime.now(JST)
         today = now.date()
-        current_year = today.year
-        min_year = current_year - YEAR_RANGE
-        max_year = current_year + YEAR_RANGE
+        current_real_year = today.year
+
+        if current_real_year < MIN_YEAR or current_real_year > MAX_YEAR:
+            raise ValueError(f"現在年 {current_real_year} は生成範囲 {MIN_YEAR}-{MAX_YEAR} の外です。")
 
         html_by_year: Dict[int, str] = {}
-        for year in range(min_year, max_year + 1):
+        for year in range(MIN_YEAR, MAX_YEAR + 1):
             holidays = get_japanese_holidays(year)
-            html_by_year[year] = build_html(year, today, holidays, min_year, max_year)
+            html_by_year[year] = build_html(year, today, holidays, current_real_year)
 
-        write_output_files(current_year, html_by_year)
+        write_output_files(current_real_year, html_by_year)
         LOGGER.info("カレンダー生成が完了しました。 output_dir=%s", DIST_DIR)
         return 0
+
     except Exception:
         LOGGER.exception("カレンダー生成に失敗しました。")
         return 1
