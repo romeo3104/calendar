@@ -5,11 +5,13 @@
 GitHub Pages 用の年カレンダーを静的生成するスクリプトです。
 
 要件:
-- JST 基準で当年の12か月分を生成
+- JST 基準で当年を中心に前後 20 年分のページを生成
 - 当日を強調表示
 - 当月を他の月より見やすく表示
 - 日本の祝日を表示
-- ヘッダーの「毎日 0時台に自動更新」は表示しない
+- 年タイトルに和暦と干支を表示
+- 月タイトルに英語名と和風月名を表示
+- 前年 / 次年ボタンを表示
 """
 
 from __future__ import annotations
@@ -17,10 +19,11 @@ from __future__ import annotations
 import calendar
 import html
 import logging
+import shutil
 import sys
 from datetime import date, datetime, timedelta
 from pathlib import Path
-from typing import Dict
+from typing import Dict, Optional
 from zoneinfo import ZoneInfo
 
 
@@ -30,8 +33,39 @@ JST = ZoneInfo("Asia/Tokyo")
 ROOT_DIR = Path(__file__).resolve().parent.parent
 SRC_STYLE_PATH = ROOT_DIR / "src" / "style.css"
 DIST_DIR = ROOT_DIR / "dist"
-DIST_HTML_PATH = DIST_DIR / "index.html"
 DIST_STYLE_PATH = DIST_DIR / "style.css"
+
+YEAR_RANGE = 20
+
+MONTH_LABELS = {
+    1: ("January", "睦月"),
+    2: ("February", "如月"),
+    3: ("March", "弥生"),
+    4: ("April", "卯月"),
+    5: ("May", "皐月"),
+    6: ("June", "水無月"),
+    7: ("July", "文月"),
+    8: ("August", "葉月"),
+    9: ("September", "長月"),
+    10: ("October", "神無月"),
+    11: ("November", "霜月"),
+    12: ("December", "師走"),
+}
+
+ZODIAC_LABELS = [
+    ("子", "ね"),
+    ("丑", "うし"),
+    ("寅", "とら"),
+    ("卯", "う"),
+    ("辰", "たつ"),
+    ("巳", "み"),
+    ("午", "うま"),
+    ("未", "ひつじ"),
+    ("申", "さる"),
+    ("酉", "とり"),
+    ("戌", "いぬ"),
+    ("亥", "い"),
+]
 
 
 def setup_logging() -> None:
@@ -255,6 +289,58 @@ def get_japanese_holidays(year: int) -> Dict[date, str]:
     return dict(sorted(all_holidays.items()))
 
 
+def get_era_label(year: int) -> str:
+    """
+    西暦年から和暦表記を返します。
+
+    :param year: 西暦年
+    :return: 和暦表記
+    """
+    if year >= 2019:
+        era_year = year - 2018
+        return f"令和{era_year}年"
+    if year >= 1989:
+        era_year = year - 1988
+        return f"平成{era_year}年"
+    if year >= 1926:
+        era_year = year - 1925
+        return f"昭和{era_year}年"
+    return f"西暦{year}年"
+
+
+def get_zodiac_label(year: int) -> str:
+    """
+    西暦年から干支表記を返します。
+
+    :param year: 西暦年
+    :return: 干支表記
+    """
+    index = (year - 2020) % 12
+    kanji, reading = ZODIAC_LABELS[index]
+    return f"{kanji}年[{reading}年]"
+
+
+def get_year_title(year: int) -> str:
+    """
+    年タイトルを返します。
+
+    :param year: 西暦年
+    :return: 表示用年タイトル
+    """
+    return f"{year}年（{get_era_label(year)}）{get_zodiac_label(year)}カレンダー"
+
+
+def get_month_title(month: int) -> str:
+    """
+    月タイトルを返します。
+
+    :param month: 月
+    :return: 表示用月タイトル
+    """
+    english_name, japanese_name = MONTH_LABELS[month]
+    return f"{english_name} ({japanese_name})"
+
+
 def build_day_cell(current_date: date, today: date, holidays: Dict[date, str]) -> str:
     """
     日付セルの HTML を生成します。
@@ -304,13 +390,11 @@ def build_month(year: int, month: int, today: date, holidays: Dict[date, str]) -
     :return: 1か月分の HTML
     """
     cal = calendar.Calendar(firstweekday=6)
-    month_name = f"{month}月"
-    is_current_month = year == today.year and month == today.month
-    month_class = "month current-month" if is_current_month else "month"
+    month_class = "month current-month" if year == today.year and month == today.month else "month"
 
     rows = []
     rows.append(f'<section class="{month_class}">')
-    rows.append(f"<h2>{month_name}</h2>")
+    rows.append(f"<h2>{get_month_title(month)}</h2>")
     rows.append('<table class="calendar-table">')
     rows.append(
         "<thead><tr>"
@@ -343,28 +427,68 @@ def build_month(year: int, month: int, today: date, holidays: Dict[date, str]) -
     return "\n".join(rows)
 
 
-def build_html(year: int, today: date, holidays: Dict[date, str]) -> str:
+def get_year_filename(year: int) -> str:
+    """
+    年ページのファイル名を返します。
+
+    :param year: 年
+    :return: ファイル名
+    """
+    return f"{year}.html"
+
+
+def build_nav_button(label: str, target_year: Optional[int], css_class: str) -> str:
+    """
+    年移動ボタンの HTML を返します。
+
+    :param label: ボタン表示文字列
+    :param target_year: 遷移先年。存在しない場合は無効ボタン
+    :param css_class: CSS クラス名
+    :return: HTML
+    """
+    if target_year is None:
+        return f'<span class="year-nav-button disabled {css_class}">{label}</span>'
+
+    target = html.escape(get_year_filename(target_year))
+    return f'<a class="year-nav-button {css_class}" href="{target}">{label}</a>'
+
+
+def build_html(year: int, today: date, holidays: Dict[date, str], min_year: int, max_year: int) -> str:
     """
     ページ全体の HTML を生成します。
 
     :param year: 年
     :param today: 今日の日付
     :param holidays: 祝日辞書
+    :param min_year: 生成範囲の最小年
+    :param max_year: 生成範囲の最大年
     :return: HTML 全文
     """
     months_html = "\n".join(build_month(year, month, today, holidays) for month in range(1, 13))
+    previous_year = year - 1 if year > min_year else None
+    next_year = year + 1 if year < max_year else None
+
+    previous_button = build_nav_button("前", previous_year, "prev")
+    next_button = build_nav_button("次", next_year, "next")
 
     return f"""<!DOCTYPE html>
 <html lang="ja">
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>{year}年カレンダー</title>
+  <title>{html.escape(get_year_title(year))}</title>
   <link rel="stylesheet" href="style.css">
 </head>
 <body>
   <header class="page-header">
-    <h1>{year}年カレンダー</h1>
+    <div class="page-header-top">
+      <div class="year-nav">
+        {previous_button}
+        {next_button}
+      </div>
+      <div class="year-range-note">{min_year}年〜{max_year}年を表示できます</div>
+    </div>
+    <h1>{html.escape(get_year_title(year))}</h1>
   </header>
   <main class="months-grid">
     {months_html}
@@ -374,20 +498,27 @@ def build_html(year: int, today: date, holidays: Dict[date, str]) -> str:
 """
 
 
-def write_output_files(html_text: str) -> None:
+def write_output_files(current_year: int, html_by_year: Dict[int, str]) -> None:
     """
     生成した HTML と CSS を dist 配下へ出力します。
 
-    :param html_text: 出力する HTML
+    :param current_year: 現在年
+    :param html_by_year: 年ごとの HTML
     :raises FileNotFoundError: style.css が存在しない場合
     """
     if not SRC_STYLE_PATH.exists():
         raise FileNotFoundError(f"CSS ファイルが見つかりません: {SRC_STYLE_PATH}")
 
-    DIST_DIR.mkdir(parents=True, exist_ok=True)
+    if DIST_DIR.exists():
+        shutil.rmtree(DIST_DIR)
 
-    DIST_HTML_PATH.write_text(html_text, encoding="utf-8")
+    DIST_DIR.mkdir(parents=True, exist_ok=True)
     DIST_STYLE_PATH.write_text(SRC_STYLE_PATH.read_text(encoding="utf-8"), encoding="utf-8")
+
+    for year, html_text in html_by_year.items():
+        (DIST_DIR / get_year_filename(year)).write_text(html_text, encoding="utf-8")
+
+    (DIST_DIR / "index.html").write_text(html_by_year[current_year], encoding="utf-8")
 
 
 def main() -> int:
@@ -401,15 +532,27 @@ def main() -> int:
     try:
         now = datetime.now(JST)
         today = now.date()
-        year = today.year
+        current_year = today.year
+        min_year = current_year - YEAR_RANGE
+        max_year = current_year + YEAR_RANGE
 
-        LOGGER.info("カレンダー生成を開始します。 year=%s date=%s", year, today.isoformat())
+        LOGGER.info(
+            "カレンダー生成を開始します。 current_year=%s min_year=%s max_year=%s date=%s",
+            current_year,
+            min_year,
+            max_year,
+            today.isoformat(),
+        )
 
-        holidays = get_japanese_holidays(year)
-        html_text = build_html(year, today, holidays)
-        write_output_files(html_text)
+        html_by_year: Dict[int, str] = {}
 
-        LOGGER.info("カレンダー生成が完了しました。 output=%s", DIST_HTML_PATH)
+        for year in range(min_year, max_year + 1):
+            holidays = get_japanese_holidays(year)
+            html_by_year[year] = build_html(year, today, holidays, min_year, max_year)
+
+        write_output_files(current_year, html_by_year)
+
+        LOGGER.info("カレンダー生成が完了しました。 output_dir=%s", DIST_DIR)
         return 0
 
     except Exception:
