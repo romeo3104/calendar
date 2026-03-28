@@ -6,6 +6,7 @@ from __future__ import annotations
 import html
 import json
 import logging
+import re
 import sys
 import xml.etree.ElementTree as ET
 from dataclasses import dataclass
@@ -64,9 +65,22 @@ MARKET_GROUPS = {
 }
 
 NEWS_SOURCES = {
-    "Reuters": "https://news.google.com/rss/search?q=site:reuters.com%20(markets%20OR%20economy%20OR%20stocks%20OR%20bonds%20OR%20oil%20OR%20currencies)%20when:1d&hl=ja&gl=JP&ceid=JP:ja",
-    "Bloomberg": "https://news.google.com/rss/search?q=site:bloomberg.com%20(markets%20OR%20economy%20OR%20stocks%20OR%20bonds%20OR%20oil%20OR%20currencies)%20when:1d&hl=ja&gl=JP&ceid=JP:ja",
+    "Reuters日本語": (
+        "https://news.google.com/rss/search?"
+        "q=site:jp.reuters.com%20"
+        "(市場%20OR%20経済%20OR%20株式%20OR%20債券%20OR%20原油%20OR%20為替%20OR%20金)%20when:1d"
+        "&hl=ja&gl=JP&ceid=JP:ja"
+    ),
+    "Bloomberg日本語": (
+        "https://news.google.com/rss/search?"
+        "q=(site:bloomberg.co.jp%20OR%20site:bloomberg.com)%20"
+        "(市場%20OR%20経済%20OR%20株式%20OR%20債券%20OR%20原油%20OR%20為替%20OR%20金)%20when:1d"
+        "&hl=ja&gl=JP&ceid=JP:ja"
+    ),
 }
+
+JAPANESE_CHAR_PATTERN = re.compile(r"[ぁ-んァ-ヶ一-龠々ー]")
+NOISE_SUFFIX_PATTERN = re.compile(r"\s*[-|｜]\s*(Reuters|Bloomberg|ロイター|ブルームバーグ).*$", re.IGNORECASE)
 
 
 @dataclass
@@ -167,27 +181,55 @@ def fetch_all_markets() -> Dict[str, List[MarketItem]]:
     return results
 
 
+def normalize_news_title(title: str) -> str:
+    cleaned = html.unescape(title).strip()
+    cleaned = NOISE_SUFFIX_PATTERN.sub("", cleaned)
+    return cleaned.strip()
+
+
+def is_japanese_title(title: str) -> bool:
+    if not title:
+        return False
+    return JAPANESE_CHAR_PATTERN.search(title) is not None
+
+
 def fetch_news_items(url: str, limit: int = 8) -> List[dict]:
     try:
         response = requests.get(url, timeout=20, headers={"User-Agent": "Mozilla/5.0"})
         response.raise_for_status()
         root = ET.fromstring(response.content)
         items: List[dict] = []
+        seen_titles = set()
 
         for item in root.findall(".//item"):
-            title = (item.findtext("title") or "").strip()
+            raw_title = (item.findtext("title") or "").strip()
+            title = normalize_news_title(raw_title)
             link = (item.findtext("link") or "").strip()
             pub_date = (item.findtext("pubDate") or "").strip()
+
             if not title or not link:
                 continue
+
+            if not is_japanese_title(title):
+                continue
+
+            if title in seen_titles:
+                continue
+
+            seen_titles.add(title)
             items.append({"title": title, "link": link, "pub_date": pub_date})
+
             if len(items) >= limit:
                 break
 
-        return items
+        if items:
+            return items
+
+        return [{"title": "日本語ニュースを取得できませんでした。", "link": "", "pub_date": ""}]
+
     except Exception as exc:
         LOGGER.exception("ニュース取得失敗: %s", url)
-        return [{"title": f"取得失敗: {exc}", "link": "", "pub_date": ""}]
+        return [{"title": f"日本語ニュース取得失敗: {exc}", "link": "", "pub_date": ""}]
 
 
 def build_overview_bullets(markets: Dict[str, List[MarketItem]]) -> List[str]:
