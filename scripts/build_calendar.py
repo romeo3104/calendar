@@ -18,6 +18,8 @@ GitHub Pages 用の年カレンダーを静的生成するスクリプトです�
 - 年表示チップの枠を表示しない
 - 今ボタンは枠を残し、背景は透過
 - 直前に押したナビゲーションボタンのフォーカス状態を保持する
+- JST 0時を跨いだ場合でも、ブラウザ側で当日と当月を更新する
+- index.html は生成時点の年ページを複製せず、閲覧時点の JST 年ページへ遷移する
 """
 
 from __future__ import annotations
@@ -45,6 +47,8 @@ DIST_STYLE_PATH = DIST_DIR / "style.css"
 MIN_YEAR = 1990
 MAX_YEAR = 2050
 CURRENT_YEAR_LINK_LABEL = "今"
+TODAY_SUMMARY_PATH = "summary/latest.html"
+TODAY_LINK_ARIA_LABEL = "世界経済サマリーを表示"
 
 MONTH_LABELS = {
     1: ("January", "睦月"),
@@ -298,7 +302,10 @@ def get_month_title(month: int) -> str:
 
 def build_today_link(current_date: date, today: date) -> str:
     if current_date == today:
-        return f'<a class="today-link" href="summary/latest.html" aria-label="世界経済サマリーを表示">{current_date.day}</a>'
+        return (
+            f'<a class="today-link" href="{html.escape(TODAY_SUMMARY_PATH)}" '
+            f'aria-label="{html.escape(TODAY_LINK_ARIA_LABEL)}">{current_date.day}</a>'
+        )
     return str(current_date.day)
 
 
@@ -320,10 +327,11 @@ def build_day_cell(current_date: date, today: date, holidays: Dict[date, str]) -
     class_attr = f' class="{" ".join(classes)}"' if classes else ""
     escaped_holiday_name = html.escape(holiday_name) if holiday_name is not None else ""
     holiday_html = f'<div class="holiday-name">{escaped_holiday_name}</div>' if holiday_name is not None else ""
+    iso_date = current_date.isoformat()
 
     return (
-        f"<td{class_attr}>"
-        f'<div class="day-number">{build_today_link(current_date, today)}</div>'
+        f'<td{class_attr} data-date="{html.escape(iso_date)}" data-day="{current_date.day}">'
+        f'<div class="day-number" data-day="{current_date.day}">{build_today_link(current_date, today)}</div>'
         f"{holiday_html}"
         f"</td>"
     )
@@ -341,7 +349,7 @@ def build_month(year: int, month: int, today: date, holidays: Dict[date, str]) -
     month_class = "month current-month" if year == today.year and month == today.month else "month"
 
     rows = []
-    rows.append(f'<section class="{month_class}">')
+    rows.append(f'<section class="{month_class}" data-month="{month}">')
     rows.append(f"<h2>{get_month_title(month)}</h2>")
     rows.append('<table class="calendar-table">')
     rows.append(
@@ -394,15 +402,21 @@ def build_current_year_chip(year: int) -> str:
 
 
 def build_now_button(current_real_year: int, viewing_year: int) -> str:
+    classes = "year-nav-button now"
+    aria_disabled = ""
+    tab_index = ""
+
     if viewing_year == current_real_year:
-        return (
-            f'<span class="year-nav-button disabled now" '
-            f'data-nav-role="now">{CURRENT_YEAR_LINK_LABEL}</span>'
-        )
+        classes += " disabled"
+        aria_disabled = ' aria-disabled="true"'
+        tab_index = ' tabindex="-1"'
+
     return (
-        f'<a class="year-nav-button now" '
+        f'<a id="now-button" class="{classes}" '
         f'data-nav-role="now" '
-        f'href="{html.escape(get_year_filename(current_real_year))}">{CURRENT_YEAR_LINK_LABEL}</a>'
+        f'data-current-year="{current_real_year}" '
+        f'href="{html.escape(get_year_filename(current_real_year))}"'
+        f'{aria_disabled}{tab_index}>{CURRENT_YEAR_LINK_LABEL}</a>'
     )
 
 
@@ -415,34 +429,219 @@ def build_favicon_links() -> str:
     return "\n".join(lines)
 
 
-def build_navigation_focus_script() -> str:
-    return """<script>
-document.addEventListener('DOMContentLoaded', function () {
+def build_runtime_script() -> str:
+    return f"""<script>
+document.addEventListener('DOMContentLoaded', function () {{
   var storageKey = 'calendar-last-nav-role';
-  var navButtons = document.querySelectorAll('.year-nav-button[data-nav-role]');
+  var JST_OFFSET_MS = 9 * 60 * 60 * 1000;
+  var MIN_YEAR = {MIN_YEAR};
+  var MAX_YEAR = {MAX_YEAR};
+  var todaySummaryPath = {TODAY_SUMMARY_PATH!r};
+  var todayLinkAriaLabel = {TODAY_LINK_ARIA_LABEL!r};
+  var body = document.body;
+  var viewingYear = Number(body.getAttribute('data-viewing-year'));
 
-  navButtons.forEach(function (button) {
-    button.addEventListener('click', function () {
-      var role = button.getAttribute('data-nav-role');
-      if (role) {
-        localStorage.setItem(storageKey, role);
-      }
-    });
-  });
+  function clampYear(year) {{
+    if (year < MIN_YEAR) {{
+      return MIN_YEAR;
+    }}
+    if (year > MAX_YEAR) {{
+      return MAX_YEAR;
+    }}
+    return year;
+  }}
 
-  var savedRole = localStorage.getItem(storageKey);
-  if (!savedRole) {
-    return;
-  }
+  function pad(value) {{
+    return String(value).padStart(2, '0');
+  }}
 
-  var target = document.querySelector('.year-nav-button[data-nav-role="' + savedRole + '"]:not(.disabled)');
-  if (!target) {
-    return;
-  }
+  function getJstDateParts() {{
+    var nowUtcMs = Date.now();
+    var nowJstMs = nowUtcMs + JST_OFFSET_MS;
+    var jstDate = new Date(nowJstMs);
+    var year = jstDate.getUTCFullYear();
+    var month = jstDate.getUTCMonth() + 1;
+    var day = jstDate.getUTCDate();
+    return {{
+      year: year,
+      month: month,
+      day: day,
+      iso: year + '-' + pad(month) + '-' + pad(day)
+    }};
+  }}
 
-  target.classList.add('persisted-focus');
-  target.focus({ preventScroll: true });
-});
+  function renderPlainDayNumber(container) {{
+    if (!container) {{
+      return;
+    }}
+
+    var day = container.getAttribute('data-day') || '';
+    container.textContent = day;
+  }}
+
+  function renderTodayDayNumber(container) {{
+    if (!container) {{
+      return;
+    }}
+
+    var day = container.getAttribute('data-day') || '';
+    container.innerHTML = '<a class="today-link" href="' + todaySummaryPath + '" aria-label="' + todayLinkAriaLabel + '">' + day + '</a>';
+  }}
+
+  function updateTodayCell(jstToday) {{
+    document.querySelectorAll('td.today').forEach(function (cell) {{
+      cell.classList.remove('today');
+    }});
+
+    document.querySelectorAll('.day-number[data-day]').forEach(function (container) {{
+      renderPlainDayNumber(container);
+    }});
+
+    var targetCell = document.querySelector('td[data-date="' + jstToday.iso + '"]');
+    if (!targetCell) {{
+      return;
+    }}
+
+    targetCell.classList.add('today');
+    renderTodayDayNumber(targetCell.querySelector('.day-number[data-day]'));
+  }}
+
+  function updateCurrentMonth(jstToday) {{
+    document.querySelectorAll('.month.current-month').forEach(function (monthSection) {{
+      monthSection.classList.remove('current-month');
+    }});
+
+    if (viewingYear !== jstToday.year) {{
+      return;
+    }}
+
+    var currentMonthSection = document.querySelector('.month[data-month="' + jstToday.month + '"]');
+    if (currentMonthSection) {{
+      currentMonthSection.classList.add('current-month');
+    }}
+  }}
+
+  function updateNowButton(jstToday) {{
+    var nowButton = document.getElementById('now-button');
+    if (!nowButton) {{
+      return;
+    }}
+
+    var currentYear = clampYear(jstToday.year);
+    nowButton.setAttribute('data-current-year', String(currentYear));
+    nowButton.setAttribute('href', currentYear + '.html');
+
+    if (viewingYear === currentYear) {{
+      nowButton.classList.add('disabled');
+      nowButton.setAttribute('aria-disabled', 'true');
+      nowButton.setAttribute('tabindex', '-1');
+      return;
+    }}
+
+    nowButton.classList.remove('disabled');
+    nowButton.removeAttribute('aria-disabled');
+    nowButton.removeAttribute('tabindex');
+  }}
+
+  function applyCurrentDateState() {{
+    var jstToday = getJstDateParts();
+    updateTodayCell(jstToday);
+    updateCurrentMonth(jstToday);
+    updateNowButton(jstToday);
+    return jstToday;
+  }}
+
+  function scrollCurrentMonthIntoViewOnMobile(jstToday) {{
+    if (!window.matchMedia || !window.matchMedia('(max-width: 768px)').matches) {{
+      return;
+    }}
+
+    if (window.location.hash) {{
+      return;
+    }}
+
+    if (viewingYear !== jstToday.year) {{
+      return;
+    }}
+
+    var currentMonthSection = document.querySelector('.month[data-month="' + jstToday.month + '"]');
+    if (!currentMonthSection) {{
+      return;
+    }}
+
+    window.requestAnimationFrame(function () {{
+      currentMonthSection.scrollIntoView({{
+        behavior: 'auto',
+        block: 'start',
+        inline: 'nearest'
+      }});
+    }});
+  }}
+
+  function getMillisecondsUntilNextJstMidnight() {{
+    var nowUtcMs = Date.now();
+    var nowJstMs = nowUtcMs + JST_OFFSET_MS;
+    var nextJstMidnightMs = Math.floor(nowJstMs / 86400000) * 86400000 + 86400000;
+    return Math.max(1000, nextJstMidnightMs - nowJstMs + 50);
+  }}
+
+  function scheduleMidnightRefresh() {{
+    window.setTimeout(function () {{
+      applyCurrentDateState();
+      scheduleMidnightRefresh();
+    }}, getMillisecondsUntilNextJstMidnight());
+  }}
+
+  function setupNavigationFocusPersistence() {{
+    var navButtons = document.querySelectorAll('.year-nav-button[data-nav-role]');
+
+    navButtons.forEach(function (button) {{
+      button.addEventListener('click', function (event) {{
+        if (button.classList.contains('disabled')) {{
+          event.preventDefault();
+          return;
+        }}
+
+        var role = button.getAttribute('data-nav-role');
+        if (!role) {{
+          return;
+        }}
+
+        try {{
+          localStorage.setItem(storageKey, role);
+        }} catch (error) {{
+          console.warn('localStorage への保存に失敗しました。', error);
+        }}
+      }});
+    }});
+
+    var savedRole = null;
+    try {{
+      savedRole = localStorage.getItem(storageKey);
+    }} catch (error) {{
+      console.warn('localStorage からの読込に失敗しました。', error);
+    }}
+
+    if (!savedRole) {{
+      return;
+    }}
+
+    var target = document.querySelector('.year-nav-button[data-nav-role="' + savedRole + '"]:not(.disabled)');
+    if (!target) {{
+      return;
+    }}
+
+    target.classList.add('persisted-focus');
+    if (typeof target.focus === 'function') {{
+      target.focus({{ preventScroll: true }});
+    }}
+  }}
+
+  var initialJstToday = applyCurrentDateState();
+  scrollCurrentMonthIntoViewOnMobile(initialJstToday);
+  scheduleMidnightRefresh();
+  setupNavigationFocusPersistence();
+}});
 </script>"""
 
 
@@ -452,7 +651,7 @@ def build_html(year: int, today: date, holidays: Dict[date, str], current_real_y
     next_year = year + 1 if year < MAX_YEAR else None
     favicon_links = build_favicon_links()
     head_favicon_block = f"\n{favicon_links}" if favicon_links else ""
-    focus_script = build_navigation_focus_script()
+    runtime_script = build_runtime_script()
 
     return f"""<!DOCTYPE html>
 <html lang="ja">
@@ -462,7 +661,7 @@ def build_html(year: int, today: date, holidays: Dict[date, str], current_real_y
   <title>{html.escape(get_year_title(year))}</title>
   <link rel="stylesheet" href="style.css">{head_favicon_block}
 </head>
-<body>
+<body data-viewing-year="{year}">
   <header class="page-header">
     <div class="page-header-top">
       <div class="year-nav">
@@ -478,7 +677,59 @@ def build_html(year: int, today: date, holidays: Dict[date, str], current_real_y
   <main class="months-grid">
     {months_html}
   </main>
-  {focus_script}
+  {runtime_script}
+</body>
+</html>
+"""
+
+
+def build_index_html(current_real_year: int) -> str:
+    favicon_links = build_favicon_links()
+    head_favicon_block = f"\n{favicon_links}" if favicon_links else ""
+
+    return f"""<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>年カレンダー</title>
+  <link rel="stylesheet" href="style.css">{head_favicon_block}
+  <meta http-equiv="refresh" content="0; url={html.escape(get_year_filename(current_real_year))}">
+</head>
+<body>
+  <main class="page-header">
+    <h1>年カレンダーへ移動します</h1>
+    <p><a class="year-nav-button now" href="{html.escape(get_year_filename(current_real_year))}">現在年のカレンダーを開く</a></p>
+  </main>
+  <script>
+  (function () {{
+    var JST_OFFSET_MS = 9 * 60 * 60 * 1000;
+    var MIN_YEAR = {MIN_YEAR};
+    var MAX_YEAR = {MAX_YEAR};
+
+    function padYear(year) {{
+      if (year < MIN_YEAR) {{
+        return MIN_YEAR;
+      }}
+      if (year > MAX_YEAR) {{
+        return MAX_YEAR;
+      }}
+      return year;
+    }}
+
+    var nowUtcMs = Date.now();
+    var nowJstMs = nowUtcMs + JST_OFFSET_MS;
+    var jstDate = new Date(nowJstMs);
+    var currentYear = padYear(jstDate.getUTCFullYear());
+    var target = currentYear + '.html';
+
+    if (window.location.pathname.endsWith('/' + target)) {{
+      return;
+    }}
+
+    window.location.replace(target);
+  }})();
+  </script>
 </body>
 </html>
 """
@@ -506,7 +757,7 @@ def write_output_files(current_real_year: int, html_by_year: Dict[int, str]) -> 
     for year, html_text in html_by_year.items():
         (DIST_DIR / get_year_filename(year)).write_text(html_text, encoding="utf-8")
 
-    (DIST_DIR / "index.html").write_text(html_by_year[current_real_year], encoding="utf-8")
+    (DIST_DIR / "index.html").write_text(build_index_html(current_real_year), encoding="utf-8")
 
 
 def main() -> int:
