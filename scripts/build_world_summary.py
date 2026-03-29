@@ -45,7 +45,7 @@ NEWS_SOURCES = {
     ),
     "Bloomberg日本語": (
         "https://news.google.com/rss/search?"
-        "q=(site:bloomberg.co.jp%20OR%20site:bloomberg.com)%20"
+        "q=site:bloomberg.co.jp%20"
         "(市場%20OR%20経済%20OR%20株式%20OR%20債券%20OR%20原油%20OR%20為替%20OR%20金)%20when:1d"
         "&hl=ja&gl=JP&ceid=JP:ja"
     ),
@@ -53,6 +53,16 @@ NEWS_SOURCES = {
 
 JAPANESE_CHAR_PATTERN = re.compile(r"[ぁ-んァ-ヶ一-龠々ー]")
 NOISE_SUFFIX_PATTERN = re.compile(r"\s*[-|｜]\s*(Reuters|Bloomberg|ロイター|ブルームバーグ).*$", re.IGNORECASE)
+NEWS_TITLE_EXCLUDE_PATTERN = re.compile(
+    r"(?:"
+    r"\bStock\s+Price\s+Quote\b|"
+    r"\bQuote\s*[-:]|"
+    r"\bQuote\b.*\b(?:Index|Fund|ETF|OTC|NYSE|NASDAQ|New\s+York|Tokyo)\b|"
+    r"\b(?:ETF|Fund)\b.*\bQuote\b"
+    r")",
+    re.IGNORECASE,
+)
+
 
 YAHOO_TOPIX_URLS = [
     "https://finance.yahoo.co.jp/quote/998405.T",
@@ -1399,6 +1409,7 @@ def fetch_jgb_rows(session: requests.Session) -> List[MarketRow]:
 def normalize_news_title(title: str) -> str:
     cleaned = html.unescape(title).strip()
     cleaned = NOISE_SUFFIX_PATTERN.sub("", cleaned)
+    cleaned = re.sub(r"\s+", " ", cleaned)
     return cleaned.strip()
 
 
@@ -1406,7 +1417,17 @@ def is_japanese_title(title: str) -> bool:
     return bool(title and JAPANESE_CHAR_PATTERN.search(title))
 
 
-def fetch_news_items(session: requests.Session, url: str, limit: int = 10) -> List[dict]:
+def is_noise_news_title(title: str, publisher: str) -> bool:
+    if not title:
+        return True
+
+    if publisher == "Bloomberg日本語" and NEWS_TITLE_EXCLUDE_PATTERN.search(title):
+        return True
+
+    return False
+
+
+def fetch_news_items(session: requests.Session, publisher: str, url: str, limit: int = 10) -> List[dict]:
     try:
         response = session.get(url, timeout=30)
         response.raise_for_status()
@@ -1420,7 +1441,13 @@ def fetch_news_items(session: requests.Session, url: str, limit: int = 10) -> Li
             link = (item.findtext("link") or "").strip()
             pub_date = (item.findtext("pubDate") or "").strip()
 
-            if not title or not link or not is_japanese_title(title) or title in seen_titles:
+            if (
+                not title
+                or not link
+                or not is_japanese_title(title)
+                or is_noise_news_title(title, publisher)
+                or title in seen_titles
+            ):
                 continue
 
             seen_titles.add(title)
@@ -1751,7 +1778,7 @@ def main() -> int:
 
     session = requests_session()
     results = unique_rows(fetch_all_data())
-    news_map = {publisher: fetch_news_items(session, url) for publisher, url in NEWS_SOURCES.items()}
+    news_map = {publisher: fetch_news_items(session, publisher, url) for publisher, url in NEWS_SOURCES.items()}
 
     now_jst = datetime.now(JST)
     now_ny = now_jst.astimezone(NY)
