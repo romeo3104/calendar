@@ -26,8 +26,15 @@ JST = ZoneInfo("Asia/Tokyo")
 NY = ZoneInfo("America/New_York")
 
 ROOT_DIR = Path(__file__).resolve().parent.parent
+SRC_DIR = ROOT_DIR / "src"
 DIST_DIR = ROOT_DIR / "dist"
 SUMMARY_DIR = DIST_DIR / "summary"
+
+FAVICON_CANDIDATES = [
+    ("favicon.svg", "image/svg+xml"),
+    ("favicon.ico", "image/x-icon"),
+    ("favicon.png", "image/png"),
+]
 
 NEWS_SOURCES = {
     "Reuters日本語": (
@@ -62,12 +69,7 @@ YF_ITEMS = {
         {"name": "VIX", "symbol": "^VIX", "source": "Yahoo Finance"},
         {"name": "日経225", "symbol": "^N225", "source": "Yahoo Finance"},
         {"name": "TOPIX", "symbol": "998405.T", "source": "Yahoo!ファイナンス"},
-        {
-            "name": "東証REIT",
-            "symbol": "1343.T",
-            "source": "Yahoo!ファイナンス",
-            "note": "代替取得: NEXT FUNDS 東証REIT指数連動型上場投信",
-        },
+        {"name": "東証REIT", "symbol": "1343.T", "source": "Yahoo!ファイナンス", "note": "代替取得: NEXT FUNDS 東証REIT指数連動型上場投信"},
     ],
     "為替": [
         {"name": "ドル円", "symbol": "JPY=X", "source": "Yahoo Finance"},
@@ -149,6 +151,14 @@ def requests_session() -> requests.Session:
     return session
 
 
+def build_favicon_links() -> str:
+    lines = []
+    for filename, mime_type in FAVICON_CANDIDATES:
+        if (SRC_DIR / filename).exists():
+            lines.append(f'  <link rel="icon" href="../{html.escape(filename)}" type="{html.escape(mime_type)}">')
+    return "\n".join(lines)
+
+
 def decode_response_content(response: requests.Response) -> str:
     for encoding in ("utf-8-sig", "cp932", response.encoding or "utf-8"):
         try:
@@ -170,7 +180,6 @@ def fetch_yahoo_row(category: str, spec: dict) -> MarketRow:
         ticker = yf.Ticker(symbol)
         hist = ticker.history(period="7d", interval="1d", auto_adjust=False, actions=False)
         hist = hist.dropna(subset=["Close"])
-
         if hist.empty:
             raise ValueError("価格履歴が取得できませんでした。")
 
@@ -195,33 +204,10 @@ def fetch_yahoo_row(category: str, spec: dict) -> MarketRow:
         else:
             acquired_at = str(idx)
 
-        return MarketRow(
-            category=category,
-            name=name,
-            value=current,
-            previous=previous,
-            change=change,
-            change_pct=change_pct,
-            source=source,
-            acquired_at=acquired_at,
-            suffix=suffix,
-            note=note,
-        )
+        return MarketRow(category, name, current, previous, change, change_pct, source, acquired_at, suffix, note)
     except Exception as exc:
         LOGGER.exception("Yahoo取得失敗: %s", symbol)
-        return MarketRow(
-            category=category,
-            name=name,
-            value=None,
-            previous=None,
-            change=None,
-            change_pct=None,
-            source=source,
-            acquired_at=None,
-            suffix=suffix,
-            note=note,
-            missing_reason=f"Yahoo取得失敗: {exc}",
-        )
+        return MarketRow(category, name, None, None, None, None, source, None, suffix, note, f"Yahoo取得失敗: {exc}")
 
 
 def parse_mof_jgb_rows(session: requests.Session) -> Dict[str, MarketRow]:
@@ -257,28 +243,14 @@ def parse_mof_jgb_rows(session: requests.Session) -> Dict[str, MarketRow]:
         date_idx = header_map.get("基準日", 0)
         targets = {"5年": "日本国債5年利回り", "10年": "日本国債10年利回り", "30年": "日本国債30年利回り"}
 
-        result: Dict[str, MarketRow] = {}
+        result = {}
         for tenor, name in targets.items():
-            if tenor not in header_map:
-                raise ValueError(f"財務省CSVに {tenor} 列がありません。")
-
             idx = header_map[tenor]
             current_text = latest[idx].strip() if idx < len(latest) else ""
             date_text = latest[date_idx].strip() if date_idx < len(latest) else ""
 
             if not current_text:
-                result[name] = MarketRow(
-                    category="日本国債",
-                    name=name,
-                    value=None,
-                    previous=None,
-                    change=None,
-                    change_pct=None,
-                    source="財務省",
-                    acquired_at=date_text or None,
-                    suffix="%",
-                    missing_reason="財務省CSVの最新行に値がありません。",
-                )
+                result[name] = MarketRow("日本国債", name, None, None, None, None, "財務省", date_text or None, "%", missing_reason="財務省CSVの最新行に値がありません。")
                 continue
 
             current = float(current_text)
@@ -290,21 +262,9 @@ def parse_mof_jgb_rows(session: requests.Session) -> Dict[str, MarketRow]:
 
             change = None if previous is None else current - previous
             change_pct = None if previous in (None, 0) else (change / previous) * 100
-
-            result[name] = MarketRow(
-                category="日本国債",
-                name=name,
-                value=current,
-                previous=previous,
-                change=change,
-                change_pct=change_pct,
-                source="財務省",
-                acquired_at=f"{date_text} 財務省公表値" if date_text else "財務省公表値",
-                suffix="%",
-            )
+            result[name] = MarketRow("日本国債", name, current, previous, change, change_pct, "財務省", date_text or None, "%")
 
         return result
-
     except Exception as exc:
         LOGGER.exception("財務省JGB取得失敗")
         return {
@@ -341,43 +301,20 @@ def fetch_investing_jgb_row(session: requests.Session, name: str, url: str) -> M
         acquired_at = None
         time_match = re.search(r'(Real-time Data|Closed)·([^<\n]+)', text)
         if time_match:
-            acquired_at = f"{time_match.group(2).strip()} Investing.com"
+            acquired_at = time_match.group(2).strip()
 
         change = None if previous is None else current - previous
         change_pct = None if previous in (None, 0) else (change / previous) * 100
 
-        return MarketRow(
-            category="日本国債",
-            name=name,
-            value=current,
-            previous=previous,
-            change=change,
-            change_pct=change_pct,
-            source="Investing.com",
-            acquired_at=acquired_at,
-            suffix="%",
-            note="代替取得",
-        )
+        return MarketRow("日本国債", name, current, previous, change, change_pct, "Investing.com", acquired_at, "%", "代替取得")
     except Exception as exc:
         LOGGER.exception("Investing JGB取得失敗: %s", name)
-        return MarketRow(
-            category="日本国債",
-            name=name,
-            value=None,
-            previous=None,
-            change=None,
-            change_pct=None,
-            source="Investing.com",
-            acquired_at=None,
-            suffix="%",
-            note="代替取得",
-            missing_reason=f"Investing取得失敗: {exc}",
-        )
+        return MarketRow("日本国債", name, None, None, None, None, "Investing.com", None, "%", "代替取得", f"Investing取得失敗: {exc}")
 
 
 def fetch_jgb_rows(session: requests.Session) -> List[MarketRow]:
     primary = parse_mof_jgb_rows(session)
-    rows: List[MarketRow] = []
+    rows = []
 
     for name in ("日本国債5年利回り", "日本国債10年利回り", "日本国債30年利回り"):
         row = primary[name]
@@ -387,10 +324,8 @@ def fetch_jgb_rows(session: requests.Session) -> List[MarketRow]:
 
         fallback = fetch_investing_jgb_row(session, name, INVESTING_JGB_URLS[name])
         if fallback.is_missing:
-            combined_reason = row.missing_reason
             if fallback.missing_reason:
-                combined_reason = f"{row.missing_reason} / {fallback.missing_reason}"
-            row.missing_reason = combined_reason
+                row.missing_reason = f"{row.missing_reason} / {fallback.missing_reason}"
             rows.append(row)
         else:
             rows.append(fallback)
@@ -413,7 +348,7 @@ def fetch_news_items(session: requests.Session, url: str, limit: int = 10) -> Li
         response = session.get(url, timeout=30)
         response.raise_for_status()
         root = ET.fromstring(response.content)
-        items: List[dict] = []
+        items = []
         seen_titles = set()
 
         for item in root.findall(".//item"):
@@ -422,24 +357,15 @@ def fetch_news_items(session: requests.Session, url: str, limit: int = 10) -> Li
             link = (item.findtext("link") or "").strip()
             pub_date = (item.findtext("pubDate") or "").strip()
 
-            if not title or not link:
-                continue
-            if not is_japanese_title(title):
-                continue
-            if title in seen_titles:
+            if not title or not link or not is_japanese_title(title) or title in seen_titles:
                 continue
 
             seen_titles.add(title)
             items.append({"title": title, "link": link, "pub_date": pub_date})
-
             if len(items) >= limit:
                 break
 
-        if items:
-            return items
-
-        return [{"title": "日本語ニュースを取得できませんでした。", "link": "", "pub_date": ""}]
-
+        return items or [{"title": "日本語ニュースを取得できませんでした。", "link": "", "pub_date": ""}]
     except Exception as exc:
         LOGGER.exception("ニュース取得失敗: %s", url)
         return [{"title": f"日本語ニュース取得失敗: {exc}", "link": "", "pub_date": ""}]
@@ -447,7 +373,7 @@ def fetch_news_items(session: requests.Session, url: str, limit: int = 10) -> Li
 
 def fetch_all_data() -> Dict[str, List[MarketRow]]:
     session = requests_session()
-    results: Dict[str, List[MarketRow]] = {category: [] for category in CATEGORY_ORDER}
+    results = {category: [] for category in CATEGORY_ORDER}
 
     for category in ("株式", "為替", "米国債", "商品", "暗号資産"):
         for spec in YF_ITEMS[category]:
@@ -458,7 +384,7 @@ def fetch_all_data() -> Dict[str, List[MarketRow]]:
 
 
 def unique_rows(results: Dict[str, List[MarketRow]]) -> Dict[str, List[MarketRow]]:
-    deduped: Dict[str, List[MarketRow]] = {}
+    deduped = {}
     seen_names = set()
 
     for category in CATEGORY_ORDER:
@@ -468,20 +394,19 @@ def unique_rows(results: Dict[str, List[MarketRow]]) -> Dict[str, List[MarketRow
                 continue
             seen_names.add(row.name)
             deduped[category].append(row)
-
     return deduped
 
 
-def format_value(row: MarketRow) -> str:
-    if row.value is None:
+def format_value(row: Optional[MarketRow]) -> str:
+    if row is None or row.value is None:
         return "未取得"
 
     decimals = 2
     if row.suffix == "%":
         decimals = 3
-    if "円" in row.name and "国債" not in row.name:
+    if row and "円" in row.name and "国債" not in row.name:
         decimals = 3
-    if row.name in {"ユーロドル", "ドルインデックス"}:
+    if row and row.name in {"ユーロドル", "ドルインデックス"}:
         decimals = 4
 
     return f"{row.value:,.{decimals}f}{row.suffix}"
@@ -490,7 +415,6 @@ def format_value(row: MarketRow) -> str:
 def format_change(row: MarketRow) -> str:
     if row.change is None:
         return "未確認"
-
     sign = "+" if row.change >= 0 else ""
     decimals = 2 if row.suffix != "%" else 3
     return f"{sign}{row.change:,.{decimals}f}{row.suffix}"
@@ -499,7 +423,6 @@ def format_change(row: MarketRow) -> str:
 def format_change_pct(row: MarketRow) -> str:
     if row.change_pct is None:
         return "未確認"
-
     sign = "+" if row.change_pct >= 0 else ""
     return f"{sign}{row.change_pct:.2f}%"
 
@@ -560,11 +483,9 @@ def build_overview(results: Dict[str, List[MarketRow]]) -> List[str]:
 
 def build_category_sections(results: Dict[str, List[MarketRow]]) -> str:
     sections = []
-
     for category in CATEGORY_ORDER:
         rows = results.get(category, [])
         tr_list = []
-
         for row in rows:
             tr_list.append(
                 f"""
@@ -576,7 +497,6 @@ def build_category_sections(results: Dict[str, List[MarketRow]]) -> str:
                 </tr>
                 """
             )
-
         sections.append(
             f"""
             <section class="summary-section summary-category-section">
@@ -599,22 +519,18 @@ def build_category_sections(results: Dict[str, List[MarketRow]]) -> str:
             </section>
             """
         )
-
     return "\n".join(sections)
 
 
 def build_missing_section(results: Dict[str, List[MarketRow]]) -> str:
     rows = []
-
     for category in CATEGORY_ORDER:
         for row in results.get(category, []):
             if not row.is_missing and not row.note:
                 continue
-
             reason = row.missing_reason or "代替取得"
             alt = "あり" if row.note else "なし"
             note = row.note or ""
-
             rows.append(
                 f"""
                 <tr>
@@ -662,7 +578,6 @@ def build_missing_section(results: Dict[str, List[MarketRow]]) -> str:
 
 def build_news_sections(news_map: Dict[str, List[dict]]) -> str:
     sections = []
-
     for publisher, items in news_map.items():
         lis = []
         for item in items:
@@ -673,7 +588,6 @@ def build_news_sections(news_map: Dict[str, List[dict]]) -> str:
                 lis.append(f'<li><a href="{safe_link}" target="_blank" rel="noopener noreferrer">{title}</a></li>')
             else:
                 lis.append(f"<li>{title}</li>")
-
         sections.append(
             f"""
             <section class="summary-section">
@@ -684,14 +598,12 @@ def build_news_sections(news_map: Dict[str, List[dict]]) -> str:
             </section>
             """
         )
-
     return "\n".join(sections)
 
 
 def build_source_list(results: Dict[str, List[MarketRow]]) -> str:
     sources = []
     seen = set()
-
     for category in CATEGORY_ORDER:
         for row in results.get(category, []):
             label = row.display_source
@@ -699,8 +611,9 @@ def build_source_list(results: Dict[str, List[MarketRow]]) -> str:
                 continue
             seen.add(label)
             sources.append(label)
-
-    sources.extend([name for name in ("Reuters日本語", "Bloomberg日本語") if name not in seen])
+    for name in ("Reuters日本語", "Bloomberg日本語"):
+        if name not in seen:
+            sources.append(name)
     return "".join(f"<li>{html.escape(item)}</li>" for item in sources)
 
 
@@ -711,6 +624,8 @@ def build_summary_html(results: Dict[str, List[MarketRow]], news_map: Dict[str, 
     missing_html = build_missing_section(results)
     news_html = build_news_sections(news_map)
     sources_html = build_source_list(results)
+    favicon_links = build_favicon_links()
+    head_favicon_block = f"\n{favicon_links}" if favicon_links else ""
 
     return f"""<!DOCTYPE html>
 <html lang="ja">
@@ -718,7 +633,7 @@ def build_summary_html(results: Dict[str, List[MarketRow]], news_map: Dict[str, 
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>世界経済サマリー</title>
-  <link rel="stylesheet" href="../style.css">
+  <link rel="stylesheet" href="../style.css">{head_favicon_block}
 </head>
 <body class="summary-page">
   <header class="page-header">
@@ -786,10 +701,8 @@ def build_payload(results: Dict[str, List[MarketRow]], news_map: Dict[str, List[
 
 def write_outputs(html_text: str, data: dict, current_date: str) -> None:
     SUMMARY_DIR.mkdir(parents=True, exist_ok=True)
-
     for path in (SUMMARY_DIR / "latest.html", SUMMARY_DIR / f"{current_date}.html"):
         path.write_text(html_text, encoding="utf-8")
-
     for path in (SUMMARY_DIR / "latest.json", SUMMARY_DIR / f"{current_date}.json"):
         path.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
 
