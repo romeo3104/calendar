@@ -96,21 +96,10 @@ YF_ITEMS = {
         {"name": "VIX", "symbol": "^VIX", "source": "Yahoo Finance"},
         {"name": "日経225", "symbol": "^N225", "source": "Yahoo Finance"},
         {"name": "TOPIX", "symbol": "998405.T", "source": "Yahoo!ファイナンス", "custom_method": "yahoo_topix_page"},
-        {"name": "東証REIT", "symbol": "TREIT", "source": "JPX", "custom_method": "jpx_reit_page"},
+        {"name": "REIT", "symbol": "TREIT", "source": "JPX", "custom_method": "jpx_reit_page"},
     ],
     "為替": [
-        {"name": "ドル円", "symbol": "JPY=X", "source": "Yahoo Finance"},
-        {"name": "ユーロドル", "symbol": "EURUSD=X", "source": "Yahoo Finance"},
-        {"name": "ユーロ円", "symbol": "EURJPY=X", "source": "Yahoo Finance"},
-        {"name": "ポンド円", "symbol": "GBPJPY=X", "source": "Yahoo Finance"},
         {"name": "ドルインデックス", "symbol": "DX-Y.NYB", "source": "Yahoo Finance"},
-        {"name": "豪ドル円", "symbol": "AUDJPY=X", "source": "Yahoo Finance"},
-        {"name": "ニュージーランド円", "symbol": "NZDJPY=X", "source": "Yahoo Finance"},
-        {"name": "スイスフラン円", "symbol": "CHFJPY=X", "source": "Yahoo Finance"},
-        {"name": "韓国ウォン円", "symbol": "KRWJPY=X", "source": "Yahoo Finance"},
-        {"name": "トルコリラ円", "symbol": "TRYJPY=X", "source": "Yahoo Finance"},
-        {"name": "南アフリカランド円", "symbol": "ZARJPY=X", "source": "Yahoo Finance"},
-        {"name": "メキシコペソ円", "symbol": "MXNJPY=X", "source": "Yahoo Finance"},
     ],
     "米国債": [
         {"name": "米国債5年利回り", "symbol": "^FVX", "source": "Yahoo Finance", "is_yield10x": True, "suffix": "%"},
@@ -136,6 +125,68 @@ YF_ITEMS = {
 }
 
 CATEGORY_ORDER = ["株式", "為替", "米国債", "日本国債", "商品", "暗号資産"]
+
+YAHOO_FX_PAGE_URL = "https://finance.yahoo.co.jp/fx"
+YAHOO_FX_BATCH_SIZE = 80
+YAHOO_FX_CURRENCY_NAME_CODE_PAIRS = [
+    ("UAE ディルハム", "AED"),
+    ("オーストラリア ドル", "AUD"),
+    ("ブラジル レアル", "BRL"),
+    ("カナダ ドル", "CAD"),
+    ("スイス フラン", "CHF"),
+    ("チリ ペソ", "CLP"),
+    ("中国 元", "CNY"),
+    ("コロンビア ペソ", "COP"),
+    ("デンマーク クローネ", "DKK"),
+    ("エジプト ポンド", "EGP"),
+    ("欧州 ユーロ", "EUR"),
+    ("イギリス ポンド", "GBP"),
+    ("香港 ドル", "HKD"),
+    ("インドネシア ルピア", "IDR"),
+    ("インド ルピー", "INR"),
+    ("ヨルダン ディナール", "JOD"),
+    ("日本 円", "JPY"),
+    ("韓国 ウォン", "KRW"),
+    ("クウェート ディナール", "KWD"),
+    ("レバノン ポンド", "LBP"),
+    ("メキシコ ペソ", "MXN"),
+    ("マレーシア リンギット", "MYR"),
+    ("ノルウェー クローネ", "NOK"),
+    ("ニュージーランド ドル", "NZD"),
+    ("ペルー ソル", "PEN"),
+    ("フィリピン ペソ", "PHP"),
+    ("パラグアイ グァラニ", "PYG"),
+    ("ルーマニア レウ", "RON"),
+    ("ロシア ルーブル", "RUB"),
+    ("サウジアラビア リヤル", "SAR"),
+    ("スウェーデン クローナ", "SEK"),
+    ("シンガポール ドル", "SGD"),
+    ("タイ バーツ", "THB"),
+    ("トルコ リラ", "TRY"),
+    ("台湾 ドル", "TWD"),
+    ("アメリカ ドル", "USD"),
+    ("ベネズエラ ボリバル・ソベラノ", "VES"),
+    ("南アフリカ ランド", "ZAR"),
+]
+YAHOO_FX_PRIORITY_PAIRS = [
+    "USD/JPY",
+    "AUD/JPY",
+    "GBP/JPY",
+    "EUR/JPY",
+    "NZD/JPY",
+    "ZAR/JPY",
+    "CAD/JPY",
+    "CHF/JPY",
+    "EUR/USD",
+    "GBP/USD",
+    "AUD/USD",
+    "NZD/USD",
+    "EUR/AUD",
+    "EUR/GBP",
+    "USD/CHF",
+    "GBP/CHF",
+    "EUR/CHF",
+]
 
 
 @dataclass
@@ -267,6 +318,232 @@ def fetch_yahoo_row(category: str, spec: dict) -> MarketRow:
     except Exception as exc:
         LOGGER.exception("Yahoo取得失敗: %s", symbol)
         return MarketRow(category, name, None, None, None, None, source, None, suffix, note, f"Yahoo取得失敗: {exc}")
+
+
+def chunked(items: List[dict], size: int) -> List[List[dict]]:
+    return [items[index : index + size] for index in range(0, len(items), size)]
+
+
+def extract_close_series_from_download(hist, symbol: str):
+    if hist is None or getattr(hist, "empty", True):
+        return None
+
+    columns = getattr(hist, "columns", None)
+    if columns is None:
+        return None
+
+    try:
+        if getattr(columns, "nlevels", 1) >= 2:
+            level0 = set(columns.get_level_values(0))
+            level1 = set(columns.get_level_values(1))
+            if symbol in level0 and "Close" in level1:
+                series = hist[symbol]["Close"]
+            elif symbol in level1 and "Close" in level0:
+                series = hist["Close"][symbol]
+            else:
+                return None
+        else:
+            if "Close" not in columns:
+                return None
+            series = hist["Close"]
+
+        if hasattr(series, "dropna"):
+            series = series.dropna()
+        return series if len(series) else None
+    except Exception:
+        return None
+
+
+def build_market_row_from_close_series(category: str, spec: dict, close_series) -> MarketRow:
+    current = float(close_series.iloc[-1])
+    previous = float(close_series.iloc[-2]) if len(close_series) >= 2 else None
+    change = None if previous is None else current - previous
+    change_pct = None if previous in (None, 0) else (change / previous) * 100
+
+    acquired_at = None
+    idx = close_series.index[-1]
+    if hasattr(idx, "tz_convert"):
+        try:
+            acquired_at = idx.tz_convert(JST).strftime("%Y-%m-%d %H:%M:%S JST")
+        except Exception:
+            acquired_at = idx.strftime("%Y-%m-%d")
+    else:
+        acquired_at = str(idx)
+
+    return MarketRow(
+        category=category,
+        name=spec["name"],
+        value=current,
+        previous=previous,
+        change=change,
+        change_pct=change_pct,
+        source=spec["source"],
+        acquired_at=acquired_at,
+        suffix=spec.get("suffix", ""),
+        note=spec.get("note", ""),
+    )
+
+
+def fetch_yahoo_rows_bulk(category: str, specs: List[dict], allow_individual_fallback: bool = False) -> List[MarketRow]:
+    rows: List[MarketRow] = []
+
+    for batch_specs in chunked(specs, YAHOO_FX_BATCH_SIZE):
+        symbols = [spec["symbol"] for spec in batch_specs]
+        hist = None
+        batch_error = ""
+
+        try:
+            hist = yf.download(
+                tickers=" ".join(symbols),
+                period="7d",
+                interval="1d",
+                auto_adjust=False,
+                actions=False,
+                group_by="ticker",
+                progress=False,
+                threads=True,
+            )
+        except Exception as exc:
+            LOGGER.exception("Yahoo一括取得失敗: %s", ", ".join(symbols))
+            batch_error = f"Yahoo一括取得失敗: {exc}"
+
+        for spec in batch_specs:
+            close_series = extract_close_series_from_download(hist, spec["symbol"])
+            if close_series is not None:
+                rows.append(build_market_row_from_close_series(category, spec, close_series))
+                continue
+
+            if allow_individual_fallback:
+                try:
+                    rows.append(fetch_yahoo_row(category, spec))
+                    continue
+                except Exception as exc:
+                    rows.append(
+                        MarketRow(
+                            category=category,
+                            name=spec["name"],
+                            value=None,
+                            previous=None,
+                            change=None,
+                            change_pct=None,
+                            source=spec["source"],
+                            acquired_at=None,
+                            suffix=spec.get("suffix", ""),
+                            note=spec.get("note", ""),
+                            missing_reason=batch_error or f"Yahoo取得失敗: {exc}",
+                        )
+                    )
+                    continue
+
+            rows.append(
+                MarketRow(
+                    category=category,
+                    name=spec["name"],
+                    value=None,
+                    previous=None,
+                    change=None,
+                    change_pct=None,
+                    source=spec["source"],
+                    acquired_at=None,
+                    suffix=spec.get("suffix", ""),
+                    note=spec.get("note", ""),
+                    missing_reason=batch_error or "Yahoo一括取得でデータを確認できませんでした。",
+                )
+            )
+
+    return rows
+
+
+def extract_supported_yahoo_fx_currency_codes(session: requests.Session) -> List[str]:
+    try:
+        response = session.get(YAHOO_FX_PAGE_URL, timeout=30)
+        response.raise_for_status()
+        text = strip_html_tags(decode_response_content(response))
+        calculator_block = extract_by_patterns(
+            text,
+            [r"為替レート計算\s*(.*?)\s*を\s*.*?\s*計算\s*FXチャート・レート"],
+        )
+        source_text = calculator_block or text
+
+        detected = []
+        for currency_name, currency_code in YAHOO_FX_CURRENCY_NAME_CODE_PAIRS:
+            position = source_text.find(currency_name)
+            if position >= 0:
+                detected.append((position, currency_code))
+
+        detected.sort(key=lambda item: item[0])
+        codes = [currency_code for _, currency_code in detected]
+        if codes:
+            return codes
+    except Exception as exc:
+        LOGGER.exception("Yahoo!ファイナンス FX通貨一覧取得失敗")
+        LOGGER.warning("Yahoo!ファイナンス FX通貨一覧取得失敗のため固定一覧へフォールバックします: %s", exc)
+
+    return [currency_code for _, currency_code in YAHOO_FX_CURRENCY_NAME_CODE_PAIRS]
+
+
+def build_all_yahoo_fx_pair_specs(currency_codes: List[str]) -> List[dict]:
+    priority_map = {pair_name: index for index, pair_name in enumerate(YAHOO_FX_PRIORITY_PAIRS)}
+    specs: List[dict] = []
+
+    for base_code in currency_codes:
+        for quote_code in currency_codes:
+            if base_code == quote_code:
+                continue
+            pair_name = f"{base_code}/{quote_code}"
+            specs.append(
+                {
+                    "name": pair_name,
+                    "symbol": f"{base_code}{quote_code}=X",
+                    "source": "Yahoo!ファイナンス",
+                    "sort_key": (0 if pair_name in priority_map else 1, priority_map.get(pair_name, 9999), pair_name),
+                }
+            )
+
+    specs.sort(key=lambda spec: spec["sort_key"])
+    for spec in specs:
+        spec.pop("sort_key", None)
+    return specs
+
+
+def build_fallback_forex_specs() -> List[dict]:
+    return [
+        {"name": "USD/JPY", "symbol": "USDJPY=X", "source": "Yahoo!ファイナンス"},
+        {"name": "AUD/JPY", "symbol": "AUDJPY=X", "source": "Yahoo!ファイナンス"},
+        {"name": "GBP/JPY", "symbol": "GBPJPY=X", "source": "Yahoo!ファイナンス"},
+        {"name": "EUR/JPY", "symbol": "EURJPY=X", "source": "Yahoo!ファイナンス"},
+        {"name": "NZD/JPY", "symbol": "NZDJPY=X", "source": "Yahoo!ファイナンス"},
+        {"name": "ZAR/JPY", "symbol": "ZARJPY=X", "source": "Yahoo!ファイナンス"},
+        {"name": "CAD/JPY", "symbol": "CADJPY=X", "source": "Yahoo!ファイナンス"},
+        {"name": "CHF/JPY", "symbol": "CHFJPY=X", "source": "Yahoo!ファイナンス"},
+        {"name": "EUR/USD", "symbol": "EURUSD=X", "source": "Yahoo!ファイナンス"},
+        {"name": "GBP/USD", "symbol": "GBPUSD=X", "source": "Yahoo!ファイナンス"},
+        {"name": "AUD/USD", "symbol": "AUDUSD=X", "source": "Yahoo!ファイナンス"},
+        {"name": "NZD/USD", "symbol": "NZDUSD=X", "source": "Yahoo!ファイナンス"},
+        {"name": "EUR/AUD", "symbol": "EURAUD=X", "source": "Yahoo!ファイナンス"},
+        {"name": "EUR/GBP", "symbol": "EURGBP=X", "source": "Yahoo!ファイナンス"},
+        {"name": "USD/CHF", "symbol": "USDCHF=X", "source": "Yahoo!ファイナンス"},
+        {"name": "GBP/CHF", "symbol": "GBPCHF=X", "source": "Yahoo!ファイナンス"},
+        {"name": "EUR/CHF", "symbol": "EURCHF=X", "source": "Yahoo!ファイナンス"},
+    ]
+
+
+def fetch_forex_rows(session: requests.Session) -> List[MarketRow]:
+    rows: List[MarketRow] = []
+
+    for spec in YF_ITEMS["為替"]:
+        rows.append(fetch_yahoo_row("為替", spec))
+
+    currency_codes = extract_supported_yahoo_fx_currency_codes(session)
+    pair_specs = build_all_yahoo_fx_pair_specs(currency_codes)
+    pair_rows = [row for row in fetch_yahoo_rows_bulk("為替", pair_specs, allow_individual_fallback=False) if not row.is_missing]
+
+    if not pair_rows:
+        LOGGER.warning("Yahoo!ファイナンスの為替ペア一括取得結果が空のため主要ペアへフォールバックします。")
+        pair_rows = [row for row in fetch_yahoo_rows_bulk("為替", build_fallback_forex_specs(), allow_individual_fallback=True) if not row.is_missing]
+
+    rows.extend(pair_rows)
+    return rows
 
 
 def fill_derived_fields(
@@ -564,7 +841,7 @@ def fetch_tse_reit_from_investing(session: requests.Session, prior_errors: Optio
             current, previous, change, change_pct, acquired_at = parsed
             return MarketRow(
                 category="株式",
-                name="東証REIT",
+                name="REIT",
                 value=current,
                 previous=previous,
                 change=change,
@@ -579,7 +856,7 @@ def fetch_tse_reit_from_investing(session: requests.Session, prior_errors: Optio
 
     return MarketRow(
         category="株式",
-        name="東証REIT",
+        name="REIT",
         value=None,
         previous=None,
         change=None,
@@ -607,7 +884,7 @@ def fetch_tse_reit_from_jpx(session: requests.Session) -> MarketRow:
             previous, change, change_pct = fill_derived_fields(current, None, change, change_pct)
             return MarketRow(
                 category="株式",
-                name="東証REIT",
+                name="REIT",
                 value=current,
                 previous=previous,
                 change=change,
@@ -861,7 +1138,7 @@ def fetch_all_data() -> Dict[str, List[MarketRow]]:
     session = requests_session()
     results = {category: [] for category in CATEGORY_ORDER}
 
-    for category in ("株式", "為替", "米国債", "商品", "暗号資産"):
+    for category in ("株式", "米国債", "商品", "暗号資産"):
         for spec in YF_ITEMS[category]:
             custom_method = spec.get("custom_method")
             if custom_method == "yahoo_topix_page":
@@ -871,6 +1148,7 @@ def fetch_all_data() -> Dict[str, List[MarketRow]]:
             else:
                 results[category].append(fetch_yahoo_row(category, spec))
 
+    results["為替"] = fetch_forex_rows(session)
     results["日本国債"] = fetch_jgb_rows(session)
     return results
 
@@ -888,18 +1166,40 @@ def unique_rows(results: Dict[str, List[MarketRow]]) -> Dict[str, List[MarketRow
     return deduped
 
 
+def resolve_forex_decimals(value: float) -> int:
+    absolute_value = abs(value)
+    if absolute_value >= 1000:
+        return 2
+    if absolute_value >= 100:
+        return 3
+    if absolute_value >= 1:
+        return 4
+    if absolute_value >= 0.1:
+        return 5
+    return 6
+
+
+def resolve_display_decimals(row: MarketRow) -> int:
+    if row.suffix == "%":
+        return 3
+
+    if row.category == "為替" and row.name != "ドルインデックス" and row.value is not None:
+        return resolve_forex_decimals(row.value)
+
+    if row.name in {"ドルインデックス"}:
+        return 4
+
+    if "円" in row.name and "国債" not in row.name:
+        return 3
+
+    return 2
+
+
 def format_value(row: Optional[MarketRow]) -> str:
     if row is None or row.value is None:
         return "未取得"
 
-    decimals = 2
-    if row.suffix == "%":
-        decimals = 3
-    if "円" in row.name and "国債" not in row.name:
-        decimals = 3
-    if row.name in {"ユーロドル", "ドルインデックス"}:
-        decimals = 4
-
+    decimals = resolve_display_decimals(row)
     return f"{row.value:,.{decimals}f}{row.suffix}"
 
 
@@ -907,7 +1207,7 @@ def format_change(row: MarketRow) -> str:
     if row.change is None:
         return "未確認"
     sign = "+" if row.change >= 0 else ""
-    decimals = 2 if row.suffix != "%" else 3
+    decimals = resolve_display_decimals(row)
     return f"{sign}{row.change:,.{decimals}f}{row.suffix}"
 
 
@@ -944,9 +1244,9 @@ def build_overview_paragraphs(results: Dict[str, List[MarketRow]]) -> List[str]:
     vix = pick_row(results, "VIX")
     nikkei = pick_row(results, "日経225")
     topix = pick_row(results, "TOPIX")
-    reit = pick_row(results, "東証REIT")
-    usd_jpy = pick_row(results, "ドル円")
-    eur_usd = pick_row(results, "ユーロドル")
+    reit = pick_row(results, "REIT")
+    usd_jpy = pick_row(results, "USD/JPY")
+    eur_usd = pick_row(results, "EUR/USD")
     dxy = pick_row(results, "ドルインデックス")
     us10 = pick_row(results, "米国債10年利回り")
     jp10 = pick_row(results, "日本国債10年利回り")
@@ -968,12 +1268,12 @@ def build_overview_paragraphs(results: Dict[str, List[MarketRow]]) -> List[str]:
         "日本株は、日経225 "
         f"{format_value(nikkei)} と TOPIX {format_value(topix)} を比べると、"
         "大型株主導なのか、より広い市場全体に売買が波及しているのかを切り分けやすい状態です。"
-        f"東証REITは {format_value(reit)} で、金利の水準や国内不動産関連の見方を補助的に確認する材料になります。"
+        f"REITは {format_value(reit)} で、金利の水準や国内不動産関連の見方を補助的に確認する材料になります。"
     )
     paragraphs.append(
-        "為替と金利では、ドル円 "
-        f"{format_value(usd_jpy)}、ユーロドル {format_value(eur_usd)}、ドルインデックス {format_value(dxy)} "
-        "を並べることで、ドル高なのか円安なのかを整理しやすくなります。"
+        "為替と金利では、ドルインデックス "
+        f"{format_value(dxy)}、USD/JPY {format_value(usd_jpy)}、EUR/USD {format_value(eur_usd)} "
+        "を並べることで、ドル高そのものなのか、円安やユーロ安が主因なのかを整理しやすくなります。"
         f"加えて、米10年債利回り {format_value(us10)} と日本10年債利回り {format_value(jp10)} を見ると、"
         "日米金利差が為替をどの程度支えているかを確認できます。"
     )
