@@ -386,7 +386,6 @@ def fetch_all_data() -> Dict[str, List[MarketRow]]:
 def unique_rows(results: Dict[str, List[MarketRow]]) -> Dict[str, List[MarketRow]]:
     deduped = {}
     seen_names = set()
-
     for category in CATEGORY_ORDER:
         deduped[category] = []
         for row in results.get(category, []):
@@ -404,9 +403,9 @@ def format_value(row: Optional[MarketRow]) -> str:
     decimals = 2
     if row.suffix == "%":
         decimals = 3
-    if row and "円" in row.name and "国債" not in row.name:
+    if "円" in row.name and "国債" not in row.name:
         decimals = 3
-    if row and row.name in {"ユーロドル", "ドルインデックス"}:
+    if row.name in {"ユーロドル", "ドルインデックス"}:
         decimals = 4
 
     return f"{row.value:,.{decimals}f}{row.suffix}"
@@ -445,7 +444,7 @@ def pick_row(results: Dict[str, List[MarketRow]], name: str) -> Optional[MarketR
     return None
 
 
-def build_overview(results: Dict[str, List[MarketRow]]) -> List[str]:
+def build_overview_paragraphs(results: Dict[str, List[MarketRow]]) -> List[str]:
     spx = pick_row(results, "S&P500")
     nasdaq = pick_row(results, "NASDAQ総合")
     dow = pick_row(results, "NYダウ")
@@ -454,31 +453,51 @@ def build_overview(results: Dict[str, List[MarketRow]]) -> List[str]:
     nikkei = pick_row(results, "日経225")
     topix = pick_row(results, "TOPIX")
     reit = pick_row(results, "東証REIT")
-    us10 = pick_row(results, "米国債10年利回り")
-    jp10 = pick_row(results, "日本国債10年利回り")
     usd_jpy = pick_row(results, "ドル円")
     eur_usd = pick_row(results, "ユーロドル")
     dxy = pick_row(results, "ドルインデックス")
-    aud_jpy = pick_row(results, "豪ドル円")
-    mxn_jpy = pick_row(results, "メキシコペソ円")
+    us10 = pick_row(results, "米国債10年利回り")
+    jp10 = pick_row(results, "日本国債10年利回り")
     gold = pick_row(results, "金")
     oil = pick_row(results, "WTI原油")
     copper = pick_row(results, "銅")
     btc = pick_row(results, "BTC/USD")
     eth = pick_row(results, "ETH/USD")
 
-    lines = []
-    lines.append(f"米国株は、NYダウ {format_value(dow)}、S&P500 {format_value(spx)}、NASDAQ総合 {format_value(nasdaq)} をみると、全体として {summarize_direction(spx)} 基調です。")
-    lines.append(f"半導体株の代表としてみる SOX は {format_value(sox)} で {summarize_direction(sox)}、ハイテク全体の強弱確認に使えます。")
-    lines.append(f"VIX は {format_value(vix)} で {summarize_direction(vix)} です。数値が高いままなら、株式市場の不安心理が残っている可能性があります。")
-    lines.append(f"日本株は、日経225 {format_value(nikkei)}、TOPIX {format_value(topix)} の並びでみると、主力株と広範な市場のどちらが強いかを切り分けやすい状態です。")
-    lines.append(f"東証REITは {format_value(reit)} です。{reit.note if reit and reit.note else '元指数が未取得の場合は代替取得を表示します。'}")
-    lines.append(f"為替は、ドル円 {format_value(usd_jpy)}、ユーロドル {format_value(eur_usd)}、ドルインデックス {format_value(dxy)} を並べると、ドル高 / ドル安の方向を確認しやすいです。")
-    lines.append(f"高金利・資源国通貨の参考として、豪ドル円 {format_value(aud_jpy)}、メキシコペソ円 {format_value(mxn_jpy)} を入れています。")
-    lines.append(f"金利は、米10年 {format_value(us10)} と日本10年 {format_value(jp10)} を基準に、日米の長期金利差と為替の関係を確認できる構成です。")
-    lines.append(f"商品は、金 {format_value(gold)}、WTI原油 {format_value(oil)}、銅 {format_value(copper)} を中心に、安全資産・エネルギー・景気敏感の3方向を見ます。")
-    lines.append(f"暗号資産は、BTC/USD {format_value(btc)} と ETH/USD {format_value(eth)} を中心に、リスク選好の補助指標として扱います。")
-    return lines
+    paragraphs = []
+    paragraphs.append(
+        "足元の相場全体をみると、米国株は "
+        f"NYダウ {format_value(dow)}、S&P500 {format_value(spx)}、NASDAQ総合 {format_value(nasdaq)} "
+        f"の並びで弱含みとなっており、SOX {format_value(sox)} の動きもあわせてみると、"
+        "ハイテク・半導体まで売りが広がっている構図です。"
+        f"一方で VIX は {format_value(vix)} と高めで、株式市場の不安心理がまだ残っていることを示しています。"
+    )
+    paragraphs.append(
+        "日本株は、日経225 "
+        f"{format_value(nikkei)} と TOPIX {format_value(topix)} を比べると、"
+        "大型株主導なのか、より広い市場全体に売買が波及しているのかを切り分けやすい状態です。"
+        f"東証REITは {format_value(reit)} で、金利の水準や国内不動産関連の見方を補助的に確認する材料になります。"
+    )
+    paragraphs.append(
+        "為替と金利では、ドル円 "
+        f"{format_value(usd_jpy)}、ユーロドル {format_value(eur_usd)}、ドルインデックス {format_value(dxy)} "
+        "を並べることで、ドル高なのか円安なのかを整理しやすくなります。"
+        f"加えて、米10年債利回り {format_value(us10)} と日本10年債利回り {format_value(jp10)} を見ると、"
+        "日米金利差が為替をどの程度支えているかを確認できます。"
+    )
+    paragraphs.append(
+        "商品市況では、金 "
+        f"{format_value(gold)}、WTI原油 {format_value(oil)}、銅 {format_value(copper)} "
+        "を中心に見ると、安全資産、エネルギー、景気敏感という異なる軸を同時に追えます。"
+        "金が強く、原油や銅が弱い局面なら慎重姿勢が強いと読みやすく、逆なら景気期待が支えになっている可能性があります。"
+    )
+    paragraphs.append(
+        "暗号資産は、BTC/USD "
+        f"{format_value(btc)} と ETH/USD {format_value(eth)} を中心に、"
+        "伝統資産とは別のリスク選好の温度感を測る補助指標として扱っています。"
+        "株式が弱いのに暗号資産が底堅い場合は、投機資金の残存を示すことがあり、逆に同時安ならリスク回避色が強いと解釈しやすいです。"
+    )
+    return paragraphs
 
 
 def build_category_sections(results: Dict[str, List[MarketRow]]) -> str:
@@ -618,8 +637,8 @@ def build_source_list(results: Dict[str, List[MarketRow]]) -> str:
 
 
 def build_summary_html(results: Dict[str, List[MarketRow]], news_map: Dict[str, List[dict]], generated_at_jst: datetime, generated_at_ny: datetime) -> str:
-    overview_lines = build_overview(results)
-    overview_html = "".join(f"<li>{html.escape(line)}</li>" for line in overview_lines)
+    overview_paragraphs = build_overview_paragraphs(results)
+    overview_html = "".join(f"<p>{html.escape(text)}</p>" for text in overview_paragraphs)
     sections_html = build_category_sections(results)
     missing_html = build_missing_section(results)
     news_html = build_news_sections(news_map)
@@ -647,11 +666,11 @@ def build_summary_html(results: Dict[str, List[MarketRow]], news_map: Dict[str, 
     <p class="summary-meta">生成時刻 JST: {html.escape(generated_at_jst.strftime("%Y-%m-%d %H:%M:%S"))} / New York: {html.escape(generated_at_ny.strftime("%Y-%m-%d %H:%M:%S"))}</p>
   </header>
 
-  <section class="summary-section">
+  <section class="summary-section summary-overview-section">
     <h2>概況</h2>
-    <ul class="summary-bullets">
+    <div class="summary-overview-prose">
       {overview_html}
-    </ul>
+    </div>
   </section>
 
   <section class="summary-sections-grid">
