@@ -101,7 +101,7 @@ YF_ITEMS = {
         {"name": "VIX", "symbol": "^VIX", "source": "Yahoo Finance"},
         {"name": "日経225", "symbol": "^N225", "source": "Yahoo Finance"},
         {"name": "TOPIX", "symbol": "998405.T", "source": "Yahoo!ファイナンス", "custom_method": "yahoo_topix_page"},
-        {"name": "REIT", "symbol": "TREIT", "source": "JPX", "custom_method": "jpx_reit_page"},
+        {"name": "J-REIT", "symbol": "TREIT", "source": "JPX", "custom_method": "jpx_reit_page"},
     ],
     "為替": [
         {"name": "ドルインデックス", "symbol": "DX-Y.NYB", "source": "Yahoo Finance"},
@@ -703,7 +703,7 @@ def fetch_reit_from_jpx_realvalues(session: requests.Session) -> MarketRow:
             current, previous, change, change_pct, acquired_at = parsed
             return MarketRow(
                 category="株式",
-                name="REIT",
+                name="J-REIT",
                 value=current,
                 previous=previous,
                 change=change,
@@ -718,7 +718,7 @@ def fetch_reit_from_jpx_realvalues(session: requests.Session) -> MarketRow:
 
     return MarketRow(
         category="株式",
-        name="REIT",
+        name="J-REIT",
         value=None,
         previous=None,
         change=None,
@@ -726,7 +726,7 @@ def fetch_reit_from_jpx_realvalues(session: requests.Session) -> MarketRow:
         source="JPX",
         acquired_at=None,
         note="代替取得",
-        missing_reason=" / ".join(errors) if errors else "JPX realvalues から REIT を取得できませんでした。",
+        missing_reason=" / ".join(errors) if errors else "JPX realvalues から J-REIT を取得できませんでした。",
     )
 
 
@@ -918,7 +918,7 @@ def fetch_reit_from_jpx_quote(session: requests.Session) -> MarketRow:
             previous, change, change_pct = fill_derived_fields(current, None, change, change_pct)
             return MarketRow(
                 category="株式",
-                name="REIT",
+                name="J-REIT",
                 value=current,
                 previous=previous,
                 change=change,
@@ -933,7 +933,7 @@ def fetch_reit_from_jpx_quote(session: requests.Session) -> MarketRow:
 
     return MarketRow(
         category="株式",
-        name="REIT",
+        name="J-REIT",
         value=None,
         previous=None,
         change=None,
@@ -941,7 +941,7 @@ def fetch_reit_from_jpx_quote(session: requests.Session) -> MarketRow:
         source="JPX",
         acquired_at=None,
         note="代替取得",
-        missing_reason=" / ".join(errors) if errors else "JPX 個別指数ページから REIT を取得できませんでした。",
+        missing_reason=" / ".join(errors) if errors else "JPX 個別指数ページから J-REIT を取得できませんでした。",
     )
 
 
@@ -1020,7 +1020,7 @@ def fetch_tse_reit_from_investing(session: requests.Session, prior_errors: Optio
             current, previous, change, change_pct, acquired_at = parsed
             return MarketRow(
                 category="株式",
-                name="REIT",
+                name="J-REIT",
                 value=current,
                 previous=previous,
                 change=change,
@@ -1035,7 +1035,7 @@ def fetch_tse_reit_from_investing(session: requests.Session, prior_errors: Optio
 
     return MarketRow(
         category="株式",
-        name="REIT",
+        name="J-REIT",
         value=None,
         previous=None,
         change=None,
@@ -1043,7 +1043,7 @@ def fetch_tse_reit_from_investing(session: requests.Session, prior_errors: Optio
         source="Investing.com",
         acquired_at=None,
         note="代替取得",
-        missing_reason=" / ".join(errors) if errors else "Investing.com から東証REITを取得できませんでした。",
+        missing_reason=" / ".join(errors) if errors else "Investing.com から J-REIT を取得できませんでした。",
     )
 
 
@@ -1418,7 +1418,7 @@ def build_overview_paragraphs(results: Dict[str, List[MarketRow]]) -> List[str]:
     vix = pick_row(results, "VIX")
     nikkei = pick_row(results, "日経225")
     topix = pick_row(results, "TOPIX")
-    reit = pick_row(results, "REIT")
+    reit = pick_row(results, "J-REIT")
     usd_jpy = pick_row(results, "USD/JPY")
     eur_usd = pick_row(results, "EUR/USD")
     dxy = pick_row(results, "ドルインデックス")
@@ -1442,7 +1442,7 @@ def build_overview_paragraphs(results: Dict[str, List[MarketRow]]) -> List[str]:
         "日本株は、日経225 "
         f"{format_value(nikkei)} と TOPIX {format_value(topix)} を比べると、"
         "大型株主導なのか、より広い市場全体に売買が波及しているのかを切り分けやすい状態です。"
-        f"REITは {format_value(reit)} で、金利の水準や国内不動産関連の見方を補助的に確認する材料になります。"
+        f"J-REITは {format_value(reit)} で、金利の水準や国内不動産関連の見方を補助的に確認する材料になります。"
     )
     paragraphs.append(
         "為替と金利では、ドルインデックス "
