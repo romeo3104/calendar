@@ -81,15 +81,23 @@ INVESTING_REIT_URLS = [
     "https://jp.investing.com/indices/topix-reit-market",
     "https://www.investing.com/indices/topix-reit-market",
 ]
+INVESTING_REIT_HISTORICAL_URLS = [
+    "https://jp.investing.com/indices/topix-reit-market-historical-data",
+    "https://www.investing.com/indices/topix-reit-market-historical-data",
+]
 MOF_JGB_CSV_URLS = [
     "https://www.mof.go.jp/english/policy/jgbs/reference/interest_rate/historical/jgbcme_all.csv",
     "https://www.mof.go.jp/jgbs/reference/interest_rate/historical/jgbcme_all.csv",
     "https://www.mof.go.jp/jgbs/reference/interest_rate/jgbcm.csv",
 ]
 INVESTING_JGB_URLS = {
+    "日本国債2年利回り": "https://jp.investing.com/rates-bonds/japan-2-year-bond-yield",
     "日本国債5年利回り": "https://www.investing.com/rates-bonds/japan-5-year-bond-yield",
     "日本国債10年利回り": "https://www.investing.com/rates-bonds/japan-10-year-bond-yield",
     "日本国債30年利回り": "https://www.investing.com/rates-bonds/japan-30-year-bond-yield",
+}
+INVESTING_US_BOND_URLS = {
+    "米国債2年利回り": "https://www.investing.com/rates-bonds/u.s.-2-year-bond-yield",
 }
 
 YF_ITEMS = {
@@ -107,6 +115,7 @@ YF_ITEMS = {
         {"name": "ドルインデックス", "symbol": "DX-Y.NYB", "source": "Yahoo Finance"},
     ],
     "米国債": [
+        {"name": "米国債2年利回り", "symbol": "US2YT=X", "source": "Investing.com", "suffix": "%", "custom_method": "investing_us_bond_2y"},
         {"name": "米国債5年利回り", "symbol": "^FVX", "source": "Yahoo Finance", "is_yield10x": True, "suffix": "%"},
         {"name": "米国債10年利回り", "symbol": "^TNX", "source": "Yahoo Finance", "is_yield10x": True, "suffix": "%"},
         {"name": "米国債30年利回り", "symbol": "^TYX", "source": "Yahoo Finance", "is_yield10x": True, "suffix": "%"},
@@ -811,6 +820,138 @@ def parse_investing_snapshot(
 
     return None
 
+def parse_investing_historical_latest_rows(
+    text: str,
+    section_markers: List[str],
+) -> Optional[tuple[float, Optional[float], Optional[float], Optional[float], Optional[str]]]:
+    target_text = text
+    for marker in section_markers:
+        position = text.find(marker)
+        if position >= 0:
+            target_text = text[position:]
+            break
+
+    matches = list(
+        re.finditer(
+            r"(\d{4}年\d{1,2}月\d{1,2}日)\s+([0-9,]+(?:\.[0-9]+)?)\s+[0-9,]+(?:\.[0-9]+)?\s+[0-9,]+(?:\.[0-9]+)?\s+[0-9,]+(?:\.[0-9]+)?\s*([+\-−＋]?[0-9.]+)%",
+            target_text,
+            re.IGNORECASE,
+        )
+    )
+    if not matches:
+        return None
+
+    current = parse_decimal(matches[0].group(2))
+    change_pct = parse_decimal(matches[0].group(3))
+    previous = parse_decimal(matches[1].group(2)) if len(matches) >= 2 else None
+    acquired_at = matches[0].group(1)
+    if current is None:
+        return None
+
+    change = None if previous is None else current - previous
+    previous, change, change_pct = fill_derived_fields(current, previous, change, change_pct)
+    return current, previous, change, change_pct, acquired_at
+
+
+def fetch_investing_bond_row(
+    session: requests.Session,
+    category: str,
+    name: str,
+    url: str,
+    jp_mode: bool = False,
+) -> MarketRow:
+    try:
+        response = session.get(url, timeout=30)
+        response.raise_for_status()
+        text = strip_html_tags(decode_response_content(response))
+
+        current = extract_by_patterns(
+            text,
+            [
+                r"Add to Watchlist\s*([0-9,]+(?:\.[0-9]+)?)\s*[+\-−＋]?[0-9,]+(?:\.[0-9]+)?\s*\(",
+                r"ウォッチリストに加える\s*([0-9,]+(?:\.[0-9]+)?)\s*[+\-−＋]?[0-9,]+(?:\.[0-9]+)?\s*\(",
+            ],
+        )
+        previous = extract_by_patterns(
+            text,
+            [
+                r"Prev\. Close\s*([0-9,]+(?:\.[0-9]+)?)",
+                r"前日終値\s*([0-9,]+(?:\.[0-9]+)?)",
+            ],
+        )
+        change = extract_by_patterns(
+            text,
+            [
+                r"Add to Watchlist\s*[0-9,]+(?:\.[0-9]+)?\s*([+\-−＋]?[0-9,]+(?:\.[0-9]+)?)\(",
+                r"ウォッチリストに加える\s*[0-9,]+(?:\.[0-9]+)?\s*([+\-−＋]?[0-9,]+(?:\.[0-9]+)?)\(",
+            ],
+        )
+        change_pct = extract_by_patterns(
+            text,
+            [
+                r"Add to Watchlist\s*[0-9,]+(?:\.[0-9]+)?\s*[+\-−＋]?[0-9,]+(?:\.[0-9]+)?\(([+\-−＋]?[0-9.]+)%\)",
+                r"ウォッチリストに加える\s*[0-9,]+(?:\.[0-9]+)?\s*[+\-−＋]?[0-9,]+(?:\.[0-9]+)?\(([+\-−＋]?[0-9.]+)%\)",
+            ],
+        )
+        acquired_at = extract_by_patterns(
+            text,
+            [
+                r"(?:Closed|終了)[·・]?\s*([0-9]{1,2}/[0-9]{2}(?:/[0-9]{2,4})?|[0-9]{1,2}:[0-9]{2}(?::[0-9]{2})?)",
+            ],
+        )
+
+        current_value = parse_decimal(current)
+        previous_value = parse_decimal(previous)
+        change_value = parse_decimal(change)
+        change_pct_value = parse_decimal(change_pct)
+        if current_value is None:
+            raise ValueError("Investing.comから現在値を抽出できませんでした。")
+
+        previous_value, change_value, change_pct_value = fill_derived_fields(
+            current_value,
+            previous_value,
+            change_value,
+            change_pct_value,
+        )
+
+        return MarketRow(
+            category=category,
+            name=name,
+            value=current_value,
+            previous=previous_value,
+            change=change_value,
+            change_pct=change_pct_value,
+            source="Investing.com",
+            acquired_at=acquired_at,
+            suffix="%",
+            note="代替取得" if jp_mode else "",
+        )
+    except Exception as exc:
+        LOGGER.exception("Investing bond取得失敗: %s", name)
+        return MarketRow(
+            category=category,
+            name=name,
+            value=None,
+            previous=None,
+            change=None,
+            change_pct=None,
+            source="Investing.com",
+            acquired_at=None,
+            suffix="%",
+            note="代替取得" if jp_mode else "",
+            missing_reason=f"Investing取得失敗: {exc}",
+        )
+
+
+def fetch_us_2y_from_investing(session: requests.Session) -> MarketRow:
+    return fetch_investing_bond_row(
+        session=session,
+        category="米国債",
+        name="米国債2年利回り",
+        url=INVESTING_US_BOND_URLS["米国債2年利回り"],
+        jp_mode=False,
+    )
+
 
 def fetch_topix_from_investing(session: requests.Session) -> MarketRow:
     errors: List[str] = []
@@ -1002,6 +1143,36 @@ def fetch_topix_from_yahoo_finance(session: requests.Session) -> MarketRow:
 
 def fetch_tse_reit_from_investing(session: requests.Session, prior_errors: Optional[List[str]] = None) -> MarketRow:
     errors = list(prior_errors or [])
+
+    for url in INVESTING_REIT_HISTORICAL_URLS:
+        try:
+            response = session.get(url, timeout=30)
+            response.raise_for_status()
+            text = strip_html_tags(decode_response_content(response))
+            parsed = parse_investing_historical_latest_rows(
+                text=text,
+                section_markers=["## 東証REIT指数 過去データ", "# 東証REIT指数 (TREIT)"],
+            )
+            if parsed is None:
+                errors.append(f"Investing.com 東証REIT過去データ解析失敗: {url}")
+                continue
+
+            current, previous, change, change_pct, acquired_at = parsed
+            return MarketRow(
+                category="株式",
+                name="J-REIT",
+                value=current,
+                previous=previous,
+                change=change,
+                change_pct=change_pct,
+                source="Investing.com",
+                acquired_at=acquired_at,
+                note="過去データページから取得",
+            )
+        except Exception as exc:
+            LOGGER.exception("Investing 東証REIT過去データ取得失敗: %s", url)
+            errors.append(f"{url}: {exc}")
+
     for url in INVESTING_REIT_URLS:
         try:
             response = session.get(url, timeout=30)
@@ -1027,7 +1198,7 @@ def fetch_tse_reit_from_investing(session: requests.Session, prior_errors: Optio
                 change_pct=change_pct,
                 source="Investing.com",
                 acquired_at=acquired_at,
-                note="代替取得",
+                note="概要ページから取得",
             )
         except Exception as exc:
             LOGGER.exception("Investing 東証REIT取得失敗: %s", url)
@@ -1106,17 +1277,19 @@ def parse_mof_jgb_rows(session: requests.Session) -> Dict[str, MarketRow]:
             header_map = {normalize_header(cell): idx for idx, cell in enumerate(header_row)}
 
             date_idx = find_header_index(header_map, ["基準日", "Date"])
+            idx_2 = find_header_index(header_map, ["2年", "2Year"])
             idx_5 = find_header_index(header_map, ["5年", "5Year"])
             idx_10 = find_header_index(header_map, ["10年", "10Year"])
             idx_30 = find_header_index(header_map, ["30年", "30Year"])
 
-            if date_idx is None or idx_5 is None or idx_10 is None or idx_30 is None:
+            if date_idx is None or idx_2 is None or idx_5 is None or idx_10 is None or idx_30 is None:
                 raise ValueError(f"必要列を検出できませんでした。 header={header_row}")
 
-            latest_values = {"日本国債5年利回り": None, "日本国債10年利回り": None, "日本国債30年利回り": None}
-            previous_values = {"日本国債5年利回り": None, "日本国債10年利回り": None, "日本国債30年利回り": None}
-            latest_dates = {"日本国債5年利回り": None, "日本国債10年利回り": None, "日本国債30年利回り": None}
+            latest_values = {"日本国債2年利回り": None, "日本国債5年利回り": None, "日本国債10年利回り": None, "日本国債30年利回り": None}
+            previous_values = {"日本国債2年利回り": None, "日本国債5年利回り": None, "日本国債10年利回り": None, "日本国債30年利回り": None}
+            latest_dates = {"日本国債2年利回り": None, "日本国債5年利回り": None, "日本国債10年利回り": None, "日本国債30年利回り": None}
             index_map = {
+                "日本国債2年利回り": idx_2,
                 "日本国債5年利回り": idx_5,
                 "日本国債10年利回り": idx_10,
                 "日本国債30年利回り": idx_30,
@@ -1139,7 +1312,7 @@ def parse_mof_jgb_rows(session: requests.Session) -> Dict[str, MarketRow]:
                     break
 
             result: Dict[str, MarketRow] = {}
-            for name in ("日本国債5年利回り", "日本国債10年利回り", "日本国債30年利回り"):
+            for name in ("日本国債2年利回り", "日本国債5年利回り", "日本国債10年利回り", "日本国債30年利回り"):
                 current = latest_values[name]
                 previous = previous_values[name]
                 if current is None:
@@ -1178,6 +1351,7 @@ def parse_mof_jgb_rows(session: requests.Session) -> Dict[str, MarketRow]:
 
     error_message = f"財務省取得失敗: {last_error}" if last_error else "財務省取得失敗"
     return {
+        "日本国債2年利回り": MarketRow("日本国債", "日本国債2年利回り", None, None, None, None, "財務省", None, "%", missing_reason=error_message),
         "日本国債5年利回り": MarketRow("日本国債", "日本国債5年利回り", None, None, None, None, "財務省", None, "%", missing_reason=error_message),
         "日本国債10年利回り": MarketRow("日本国債", "日本国債10年利回り", None, None, None, None, "財務省", None, "%", missing_reason=error_message),
         "日本国債30年利回り": MarketRow("日本国債", "日本国債30年利回り", None, None, None, None, "財務省", None, "%", missing_reason=error_message),
@@ -1192,68 +1366,20 @@ def parse_first_float(text: str, pattern: str) -> Optional[float]:
 
 
 def fetch_investing_jgb_row(session: requests.Session, name: str, url: str) -> MarketRow:
-    try:
-        response = session.get(url, timeout=30)
-        response.raise_for_status()
-        text = strip_html_tags(response.text)
-
-        current = extract_by_patterns(
-            text,
-            [
-                r"Add to Watchlist\s*([0-9,]+(?:\.[0-9]+)?)\s*[+-]?[0-9,]+(?:\.[0-9]+)?\s*\(",
-                r"ウォッチリストに加える\s*([0-9,]+(?:\.[0-9]+)?)\s*[+-]?[0-9,]+(?:\.[0-9]+)?\s*\(",
-            ],
-        )
-        previous = extract_by_patterns(
-            text,
-            [
-                r"Prev\. Close\s*([0-9,]+(?:\.[0-9]+)?)",
-                r"前日終値\s*([0-9,]+(?:\.[0-9]+)?)",
-            ],
-        )
-
-        current_value = parse_decimal(current)
-        previous_value = parse_decimal(previous)
-        if current_value is None:
-            raise ValueError("Investing.comから現在値を抽出できませんでした。")
-
-        change = None if previous_value is None else current_value - previous_value
-        change_pct = None if previous_value in (None, 0) else (change / previous_value) * 100
-
-        return MarketRow(
-            category="日本国債",
-            name=name,
-            value=current_value,
-            previous=previous_value,
-            change=change,
-            change_pct=change_pct,
-            source="Investing.com",
-            acquired_at=None,
-            suffix="%",
-            note="代替取得",
-        )
-    except Exception as exc:
-        LOGGER.exception("Investing JGB取得失敗: %s", name)
-        return MarketRow(
-            category="日本国債",
-            name=name,
-            value=None,
-            previous=None,
-            change=None,
-            change_pct=None,
-            source="Investing.com",
-            acquired_at=None,
-            suffix="%",
-            note="代替取得",
-            missing_reason=f"Investing取得失敗: {exc}",
-        )
+    return fetch_investing_bond_row(
+        session=session,
+        category="日本国債",
+        name=name,
+        url=url,
+        jp_mode=True,
+    )
 
 
 def fetch_jgb_rows(session: requests.Session) -> List[MarketRow]:
     primary = parse_mof_jgb_rows(session)
     rows: List[MarketRow] = []
 
-    for name in ("日本国債5年利回り", "日本国債10年利回り", "日本国債30年利回り"):
+    for name in ("日本国債2年利回り", "日本国債5年利回り", "日本国債10年利回り", "日本国債30年利回り"):
         row = primary[name]
         if not row.is_missing:
             rows.append(row)
@@ -1319,6 +1445,8 @@ def fetch_all_data() -> Dict[str, List[MarketRow]]:
                 results[category].append(fetch_topix_from_yahoo_finance(session))
             elif custom_method == "jpx_reit_page":
                 results[category].append(fetch_tse_reit_from_jpx(session))
+            elif custom_method == "investing_us_bond_2y":
+                results[category].append(fetch_us_2y_from_investing(session))
             else:
                 results[category].append(fetch_yahoo_row(category, spec))
 
