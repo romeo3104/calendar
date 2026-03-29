@@ -57,6 +57,11 @@ NOISE_SUFFIX_PATTERN = re.compile(r"\s*[-|｜]\s*(Reuters|Bloomberg|ロイター
 YAHOO_TOPIX_URLS = [
     "https://finance.yahoo.co.jp/quote/998405.T",
     "https://finance.yahoo.co.jp/quote/998405.T/",
+    "https://finance.yahoo.co.jp/quote/998405.T/history",
+]
+JPX_REALVALUES_URLS = [
+    "https://www.jpx.co.jp/markets/indices/realvalues/index.html",
+    "https://www.jpx.co.jp/markets/indices/realvalues/01.html",
 ]
 JPX_TOPIX_QUOTE_URLS = [
     "https://quote.jpx.co.jp/jpxhp/main/index.aspx?F=real_index&qcode=151",
@@ -255,6 +260,8 @@ def strip_html_tags(raw_html: str) -> str:
     text = re.sub(r"<script[\s\S]*?</script>", " ", raw_html, flags=re.IGNORECASE)
     text = re.sub(r"<style[\s\S]*?</style>", " ", text, flags=re.IGNORECASE)
     text = re.sub(r"<[^>]+>", " ", text)
+    text = html.unescape(text)
+    text = text.replace(" ", " ")
     return re.sub(r"\s+", " ", text).strip()
 
 
@@ -564,6 +571,165 @@ def fill_derived_fields(
     return previous, change, change_pct
 
 
+def parse_yahoo_topix_snapshot(text: str) -> Optional[tuple[float, Optional[float], Optional[float], Optional[float], Optional[str]]]:
+    current = parse_decimal(
+        extract_by_patterns(
+            text,
+            [
+                r"TOPIX〖998405\.T〗\s*国内指数\s*TOPIX\s*998405\.T\s*([0-9,]+(?:\.[0-9]+)?)\s*前日比",
+                r"##\s*TOPIX\s*998405\.T\s*([0-9,]+(?:\.[0-9]+)?)\s*前日比",
+                r"TOPIX\s*998405\.T\s*([0-9,]+(?:\.[0-9]+)?)\s*前日比",
+                r"TOPIX\s*([0-9,]+(?:\.[0-9]+)?)\s*前日比",
+            ],
+        )
+    )
+    previous = parse_decimal(
+        extract_by_patterns(
+            text,
+            [
+                r"前日終値\s*([0-9,]+(?:\.[0-9]+)?)\(",
+                r"前日終値\s*([0-9,]+(?:\.[0-9]+)?)",
+            ],
+        )
+    )
+    change = parse_decimal(
+        extract_by_patterns(
+            text,
+            [
+                r"前日比\s*([+\-−＋]?[0-9,]+(?:\.[0-9]+)?)\(",
+                r"前日比\s*([+\-−＋]?[0-9,]+(?:\.[0-9]+)?)",
+            ],
+        )
+    )
+    change_pct = parse_decimal(
+        extract_by_patterns(
+            text,
+            [
+                r"前日比\s*[+\-−＋]?[0-9,]+(?:\.[0-9]+)?\(([+\-−＋]?[0-9.]+)%\)",
+            ],
+        )
+    )
+    acquired_at = extract_by_patterns(
+        text,
+        [
+            r"リアルタイム株価\s*([0-9]{1,2}:[0-9]{2})",
+            r"リアルタイムで表示\s*([0-9]{1,2}:[0-9]{2})",
+        ],
+    )
+
+    if current is None:
+        return None
+
+    previous, change, change_pct = fill_derived_fields(current, previous, change, change_pct)
+    return current, previous, change, change_pct, acquired_at
+
+
+def parse_jpx_list_snapshot(text: str, index_labels: List[str]) -> Optional[tuple[float, Optional[float], Optional[float], Optional[str]]]:
+    label_pattern = "(?:" + "|".join(index_labels) + ")"
+    patterns = [
+        rf"{label_pattern}\s*,\s*([0-9,]+(?:\.[0-9]+)?)\s*,\s*([+\-−＋]?[0-9,]+(?:\.[0-9]+)?)\s*,\s*([+\-−＋]?[0-9.]+)\s*%",
+        rf"{label_pattern}[\s\S]{{0,200}}?現在値\s*([0-9,]+(?:\.[0-9]+)?)\s*前日比\s*([+\-−＋]?[0-9,]+(?:\.[0-9]+)?)\s*([+\-−＋]?[0-9.]+)\s*%",
+    ]
+
+    for pattern in patterns:
+        match = re.search(pattern, text, re.IGNORECASE)
+        if not match:
+            continue
+        current = parse_decimal(match.group(1))
+        change = parse_decimal(match.group(2))
+        change_pct = parse_decimal(match.group(3))
+        if current is not None:
+            previous, change, change_pct = fill_derived_fields(current, None, change, change_pct)
+            return current, previous, change, change_pct, None
+    return None
+
+
+def fetch_topix_from_jpx_realvalues(session: requests.Session) -> MarketRow:
+    errors: List[str] = []
+    for url in JPX_REALVALUES_URLS:
+        try:
+            response = session.get(url, timeout=30)
+            response.raise_for_status()
+            raw_html = decode_response_content(response)
+            stripped = strip_html_tags(raw_html)
+            parsed = parse_jpx_list_snapshot(raw_html, [r"TOPIX \\(東証株価指数\\)", r"TOPIX（東証株価指数）", r"TOPIX"]) or parse_jpx_list_snapshot(stripped, [r"TOPIX \\(東証株価指数\\)", r"TOPIX（東証株価指数）", r"TOPIX"])
+            if parsed is None:
+                errors.append(f"JPX realvalues TOPIX解析失敗: {url}")
+                continue
+
+            current, previous, change, change_pct, acquired_at = parsed
+            return MarketRow(
+                category="株式",
+                name="TOPIX",
+                value=current,
+                previous=previous,
+                change=change,
+                change_pct=change_pct,
+                source="JPX",
+                acquired_at=acquired_at,
+                note="代替取得",
+            )
+        except Exception as exc:
+            LOGGER.exception("JPX realvalues TOPIX取得失敗: %s", url)
+            errors.append(f"{url}: {exc}")
+
+    return MarketRow(
+        category="株式",
+        name="TOPIX",
+        value=None,
+        previous=None,
+        change=None,
+        change_pct=None,
+        source="JPX",
+        acquired_at=None,
+        note="代替取得",
+        missing_reason=" / ".join(errors) if errors else "JPX realvalues から TOPIX を取得できませんでした。",
+    )
+
+
+def fetch_reit_from_jpx_realvalues(session: requests.Session) -> MarketRow:
+    errors: List[str] = []
+    for url in JPX_REALVALUES_URLS:
+        try:
+            response = session.get(url, timeout=30)
+            response.raise_for_status()
+            raw_html = decode_response_content(response)
+            stripped = strip_html_tags(raw_html)
+            parsed = parse_jpx_list_snapshot(raw_html, [r"東証REIT指数", r"Tokyo Stock Exchange REIT Index"]) or parse_jpx_list_snapshot(stripped, [r"東証REIT指数", r"Tokyo Stock Exchange REIT Index"])
+            if parsed is None:
+                errors.append(f"JPX realvalues REIT解析失敗: {url}")
+                continue
+
+            current, previous, change, change_pct, acquired_at = parsed
+            return MarketRow(
+                category="株式",
+                name="REIT",
+                value=current,
+                previous=previous,
+                change=change,
+                change_pct=change_pct,
+                source="JPX",
+                acquired_at=acquired_at,
+                note="代替取得",
+            )
+        except Exception as exc:
+            LOGGER.exception("JPX realvalues REIT取得失敗: %s", url)
+            errors.append(f"{url}: {exc}")
+
+    return MarketRow(
+        category="株式",
+        name="REIT",
+        value=None,
+        previous=None,
+        change=None,
+        change_pct=None,
+        source="JPX",
+        acquired_at=None,
+        note="代替取得",
+        missing_reason=" / ".join(errors) if errors else "JPX realvalues から REIT を取得できませんでした。",
+    )
+
+
 def supplement_market_row(base: MarketRow, supplement: MarketRow, supplement_note: str) -> MarketRow:
     if supplement.is_missing:
         if supplement.missing_reason:
@@ -736,6 +902,49 @@ def fetch_topix_from_jpx_quote(session: requests.Session) -> MarketRow:
     )
 
 
+def fetch_reit_from_jpx_quote(session: requests.Session) -> MarketRow:
+    errors: List[str] = []
+    for url in JPX_REIT_QUOTE_URLS:
+        try:
+            response = session.get(url, timeout=30)
+            response.raise_for_status()
+            raw_html = decode_response_content(response)
+            parsed = parse_jpx_quote_snapshot(raw_html, [r"東証REIT指数", r"Tokyo Stock Exchange REIT Index"])
+            if parsed is None:
+                errors.append(f"JPX 東証REIT解析失敗: {url}")
+                continue
+
+            current, change, change_pct, acquired_at = parsed
+            previous, change, change_pct = fill_derived_fields(current, None, change, change_pct)
+            return MarketRow(
+                category="株式",
+                name="REIT",
+                value=current,
+                previous=previous,
+                change=change,
+                change_pct=change_pct,
+                source="JPX",
+                acquired_at=acquired_at,
+                note="代替取得",
+            )
+        except Exception as exc:
+            LOGGER.exception("JPX 東証REIT取得失敗: %s", url)
+            errors.append(f"{url}: {exc}")
+
+    return MarketRow(
+        category="株式",
+        name="REIT",
+        value=None,
+        previous=None,
+        change=None,
+        change_pct=None,
+        source="JPX",
+        acquired_at=None,
+        note="代替取得",
+        missing_reason=" / ".join(errors) if errors else "JPX 個別指数ページから REIT を取得できませんでした。",
+    )
+
+
 def fetch_topix_from_yahoo_finance(session: requests.Session) -> MarketRow:
     errors: List[str] = []
     for url in YAHOO_TOPIX_URLS:
@@ -744,49 +953,11 @@ def fetch_topix_from_yahoo_finance(session: requests.Session) -> MarketRow:
             response.raise_for_status()
             raw_html = decode_response_content(response)
             text = strip_html_tags(raw_html)
-
-            current = parse_decimal(
-                extract_by_patterns(
-                    text,
-                    [
-                        r"##\s*TOPIX\s*998405\.T\s*([0-9,]+(?:\.[0-9]+)?)\s*前日比",
-                        r"TOPIX\s*998405\.T\s*([0-9,]+(?:\.[0-9]+)?)\s*前日比",
-                        r"##\s*TOPIX\s*([0-9,]+(?:\.[0-9]+)?)\s*前日比",
-                    ],
-                )
-            )
-            previous = parse_decimal(
-                extract_by_patterns(
-                    text,
-                    [
-                        r"前日終値\s*([0-9,]+(?:\.[0-9]+)?)\(",
-                        r"前日終値\s*([0-9,]+(?:\.[0-9]+)?)",
-                    ],
-                )
-            )
-            change = parse_decimal(
-                extract_by_patterns(
-                    text,
-                    [
-                        r"前日比\s*([+\-−＋]?[0-9,]+(?:\.[0-9]+)?)\(",
-                        r"前日比\s*([+\-−＋]?[0-9,]+(?:\.[0-9]+)?)",
-                    ],
-                )
-            )
-            change_pct = parse_decimal(
-                extract_by_patterns(
-                    text,
-                    [
-                        r"前日比\s*[+\-−＋]?[0-9,]+(?:\.[0-9]+)?\(([+\-−＋]?[0-9.]+)%\)",
-                    ],
-                )
-            )
-            acquired_at = extract_by_patterns(text, [r"リアルタイム株価\s*([0-9]{1,2}:[0-9]{2})"])
-
-            if current is None:
+            parsed = parse_yahoo_topix_snapshot(text)
+            if parsed is None:
                 raise ValueError("Yahoo!ファイナンスのTOPIXページから現在値を抽出できませんでした。")
 
-            previous, change, change_pct = fill_derived_fields(current, previous, change, change_pct)
+            current, previous, change, change_pct, acquired_at = parsed
             row = MarketRow(
                 category="株式",
                 name="TOPIX",
@@ -802,7 +973,10 @@ def fetch_topix_from_yahoo_finance(session: requests.Session) -> MarketRow:
                 row = supplement_market_row(row, fetch_topix_from_investing(session), "一部をInvesting.comで補完")
 
             if row.previous is None or row.change is None or row.change_pct is None:
-                row = supplement_market_row(row, fetch_topix_from_jpx_quote(session), "一部をJPXで補完")
+                row = supplement_market_row(row, fetch_topix_from_jpx_realvalues(session), "一部をJPXリアルタイム指数一覧で補完")
+
+            if row.previous is None or row.change is None or row.change_pct is None:
+                row = supplement_market_row(row, fetch_topix_from_jpx_quote(session), "一部をJPX個別指数ページで補完")
 
             return row
         except Exception as exc:
@@ -812,8 +986,13 @@ def fetch_topix_from_yahoo_finance(session: requests.Session) -> MarketRow:
     fallback = fetch_topix_from_investing(session)
     if not fallback.is_missing:
         fallback.note = "Yahoo!ファイナンス失敗時の代替取得" if not fallback.note else f"{fallback.note} / Yahoo!ファイナンス失敗時の代替取得"
+        if fallback.previous is None or fallback.change is None or fallback.change_pct is None:
+            fallback = supplement_market_row(fallback, fetch_topix_from_jpx_realvalues(session), "Yahoo!ファイナンス失敗時のJPXリアルタイム指数一覧補完")
+        if fallback.previous is None or fallback.change is None or fallback.change_pct is None:
+            fallback = supplement_market_row(fallback, fetch_topix_from_jpx_quote(session), "Yahoo!ファイナンス失敗時のJPX個別指数補完")
         return fallback
 
+    fallback = supplement_market_row(fallback, fetch_topix_from_jpx_realvalues(session), "Yahoo!ファイナンス失敗時の代替取得")
     fallback = supplement_market_row(fallback, fetch_topix_from_jpx_quote(session), "Yahoo!ファイナンス失敗時の代替取得")
     if fallback.missing_reason:
         prefix = " / ".join(errors)
@@ -869,38 +1048,33 @@ def fetch_tse_reit_from_investing(session: requests.Session, prior_errors: Optio
 
 
 def fetch_tse_reit_from_jpx(session: requests.Session) -> MarketRow:
-    errors: List[str] = []
-    for url in JPX_REIT_QUOTE_URLS:
-        try:
-            response = session.get(url, timeout=30)
-            response.raise_for_status()
-            raw_html = decode_response_content(response)
-            parsed = parse_jpx_quote_snapshot(raw_html, [r"東証REIT指数", r"Tokyo Stock Exchange REIT Index"])
-            if parsed is None:
-                errors.append(f"JPX 東証REIT解析失敗: {url}")
-                continue
+    investing_row = fetch_tse_reit_from_investing(session)
+    if not investing_row.is_missing:
+        if investing_row.previous is None or investing_row.change is None or investing_row.change_pct is None:
+            investing_row = supplement_market_row(investing_row, fetch_reit_from_jpx_realvalues(session), "一部をJPXリアルタイム指数一覧で補完")
+        if investing_row.previous is None or investing_row.change is None or investing_row.change_pct is None:
+            investing_row = supplement_market_row(investing_row, fetch_reit_from_jpx_quote(session), "一部をJPX個別指数ページで補完")
+        return investing_row
 
-            current, change, change_pct, acquired_at = parsed
-            previous, change, change_pct = fill_derived_fields(current, None, change, change_pct)
-            return MarketRow(
-                category="株式",
-                name="REIT",
-                value=current,
-                previous=previous,
-                change=change,
-                change_pct=change_pct,
-                source="JPX",
-                acquired_at=acquired_at,
-            )
-        except Exception as exc:
-            LOGGER.exception("JPX 東証REIT取得失敗: %s", url)
-            errors.append(f"{url}: {exc}")
+    errors: List[str] = []
+    realvalues_row = fetch_reit_from_jpx_realvalues(session)
+    if not realvalues_row.is_missing:
+        realvalues_row.note = "Investing.com失敗時の代替取得" if not realvalues_row.note else f"{realvalues_row.note} / Investing.com失敗時の代替取得"
+        return realvalues_row
+    if realvalues_row.missing_reason:
+        errors.append(realvalues_row.missing_reason)
+
+    quote_row = fetch_reit_from_jpx_quote(session)
+    if not quote_row.is_missing:
+        quote_row.note = "Investing.com失敗時の代替取得" if not quote_row.note else f"{quote_row.note} / Investing.com失敗時の代替取得"
+        return quote_row
+    if quote_row.missing_reason:
+        errors.append(quote_row.missing_reason)
 
     fallback = fetch_tse_reit_from_investing(session, errors)
     if not fallback.is_missing:
         fallback.note = "JPX取得失敗時の代替取得" if not fallback.note else f"{fallback.note} / JPX取得失敗時の代替取得"
     return fallback
-
 
 def normalize_header(value: str) -> str:
     return re.sub(r"\s+", "", value).strip().lower()
