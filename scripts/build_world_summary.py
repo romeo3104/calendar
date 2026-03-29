@@ -295,8 +295,16 @@ def setup_logging() -> None:
 def should_run_now(force: bool) -> bool:
     if force:
         return True
+
     now_ny = datetime.now(NY)
-    return now_ny.weekday() < 5 and now_ny.hour == 16 and 10 <= now_ny.minute < 20
+
+    if now_ny.hour != 16:
+        return False
+
+    if not (10 <= now_ny.minute < 20):
+        return False
+
+    return True
 
 
 def requests_session() -> requests.Session:
