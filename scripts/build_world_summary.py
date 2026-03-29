@@ -979,7 +979,6 @@ def build_summary_html(results: Dict[str, List[MarketRow]], news_map: Dict[str, 
     sections_html = build_category_sections(results)
     missing_html = build_missing_section(results)
     news_html = build_news_sections(news_map)
-    sources_html = build_source_list(results)
     favicon_links = build_favicon_links()
     head_favicon_block = f"\n{favicon_links}" if favicon_links else ""
 
@@ -1018,12 +1017,6 @@ def build_summary_html(results: Dict[str, List[MarketRow]], news_map: Dict[str, 
 
   {news_html}
 
-  <section class="summary-section">
-    <h2>出典</h2>
-    <ul class="summary-news-list">
-      {sources_html}
-    </ul>
-  </section>
 </body>
 </html>"""
 
