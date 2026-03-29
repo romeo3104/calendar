@@ -240,58 +240,62 @@ a {
 
 .summary-bullets li {
   margin-bottom: 10px;
-  line-height: 1.7;
+  line-height: 1.8;
 }
 
-.summary-cards-grid {
+.summary-sections-grid {
   display: grid;
-  grid-template-columns: repeat(3, minmax(220px, 1fr));
-  gap: 16px;
+  grid-template-columns: repeat(2, minmax(520px, 1fr));
+  gap: 18px;
   margin-bottom: 20px;
+  align-items: start;
 }
 
-.summary-card {
-  background: #ffffff;
-  border: 1px solid rgba(148, 163, 184, 0.28);
-  border-radius: 16px;
-  padding: 18px;
-}
-
-.summary-card-title {
-  color: #475569;
-  font-size: 14px;
-  margin-bottom: 10px;
-}
-
-.summary-card-value {
-  font-size: 28px;
-  font-weight: 700;
-  margin-bottom: 8px;
-}
-
-.summary-card-change {
-  color: #475569;
-  font-size: 14px;
+.summary-category-section {
+  min-height: 420px;
 }
 
 .summary-table-wrap {
-  overflow-x: auto;
+  overflow: auto;
+  max-height: 420px;
+  border: 1px solid rgba(148, 163, 184, 0.18);
+  border-radius: 12px;
 }
 
 .summary-table {
   width: 100%;
-  border-collapse: collapse;
+  min-width: 760px;
+  border-collapse: separate;
+  border-spacing: 0;
+  background: #ffffff;
 }
 
 .summary-table th,
 .summary-table td {
-  border-bottom: 1px solid rgba(148, 163, 184, 0.22);
+  border-bottom: 1px solid rgba(148, 163, 184, 0.18);
   padding: 12px 10px;
   text-align: left;
+  vertical-align: top;
 }
 
-.summary-table th {
-  color: #475569;
+.summary-table thead th {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  background: #e2e8f0;
+  color: #334155;
+}
+
+.summary-table tbody tr:nth-child(odd) {
+  background: #f8fafc;
+}
+
+.summary-table tbody tr:nth-child(even) {
+  background: #ffffff;
+}
+
+.summary-table tbody tr:hover {
+  background: #eff6ff;
 }
 
 .summary-news-list {
@@ -301,16 +305,18 @@ a {
 
 .summary-news-list li {
   margin-bottom: 10px;
-  line-height: 1.6;
+  line-height: 1.7;
+}
+
+@media (max-width: 1400px) {
+  .summary-sections-grid {
+    grid-template-columns: 1fr;
+  }
 }
 
 @media (max-width: 1200px) {
   .months-grid {
     grid-template-columns: repeat(2, minmax(300px, 1fr));
-  }
-
-  .summary-cards-grid {
-    grid-template-columns: repeat(2, minmax(220px, 1fr));
   }
 }
 
@@ -325,11 +331,12 @@ a {
   }
 
   .months-grid,
-  .summary-cards-grid {
+  .summary-sections-grid {
     grid-template-columns: 1fr;
   }
 
-  .month {
+  .month,
+  .summary-category-section {
     min-height: auto;
   }
 
@@ -340,5 +347,9 @@ a {
 
   .holiday-name {
     font-size: 9px;
+  }
+
+  .summary-table {
+    min-width: 680px;
   }
 }
