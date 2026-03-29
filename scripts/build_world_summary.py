@@ -37,18 +37,32 @@ FAVICON_CANDIDATES = [
 ]
 
 NEWS_SOURCES = {
-    "Reuters日本語": (
-        "https://news.google.com/rss/search?"
-        "q=site:jp.reuters.com%20"
-        "(市場%20OR%20経済%20OR%20株式%20OR%20債券%20OR%20原油%20OR%20為替%20OR%20金)%20when:1d"
-        "&hl=ja&gl=JP&ceid=JP:ja"
-    ),
-    "Bloomberg日本語": (
-        "https://news.google.com/rss/search?"
-        "q=site:bloomberg.co.jp%20"
-        "(市場%20OR%20経済%20OR%20株式%20OR%20債券%20OR%20原油%20OR%20為替%20OR%20金)%20when:1d"
-        "&hl=ja&gl=JP&ceid=JP:ja"
-    ),
+    "Reuters日本語": [
+        (
+            "https://news.google.com/rss/search?"
+            "q=site:jp.reuters.com%20"
+            "(市場%20OR%20経済%20OR%20株式%20OR%20債券%20OR%20原油%20OR%20為替%20OR%20金)%20when:1d"
+            "&hl=ja&gl=JP&ceid=JP:ja"
+        ),
+    ],
+    "Bloomberg日本語": [
+        (
+            "https://news.google.com/rss/search?"
+            "q=site:bloomberg.co.jp/news/articles%20when:2d"
+            "&hl=ja&gl=JP&ceid=JP:ja"
+        ),
+        (
+            "https://news.google.com/rss/search?"
+            "q=site:bloomberg.com/jp%20when:2d"
+            "&hl=ja&gl=JP&ceid=JP:ja"
+        ),
+        (
+            "https://news.google.com/rss/search?"
+            "q=(site:bloomberg.co.jp/news/articles%20OR%20site:bloomberg.co.jp/news)%20"
+            "(市場%20OR%20経済%20OR%20株式%20OR%20債券%20OR%20原油%20OR%20為替%20OR%20金)%20when:7d"
+            "&hl=ja&gl=JP&ceid=JP:ja"
+        ),
+    ],
 }
 
 JAPANESE_CHAR_PATTERN = re.compile(r"[ぁ-んァ-ヶ一-龠々ー]")
@@ -60,6 +74,12 @@ NEWS_TITLE_EXCLUDE_PATTERN = re.compile(
     r"\bQuote\b.*\b(?:Index|Fund|ETF|OTC|NYSE|NASDAQ|New\s+York|Tokyo)\b|"
     r"\b(?:ETF|Fund)\b.*\bQuote\b"
     r")",
+    re.IGNORECASE,
+)
+
+
+BLOOMBERG_ALLOWED_LINK_PATTERN = re.compile(
+    r"https?://(?:www\\.)?(?:bloomberg\\.co\\.jp/news/|bloomberg\\.com/jp/)",
     re.IGNORECASE,
 )
 
@@ -1427,38 +1447,58 @@ def is_noise_news_title(title: str, publisher: str) -> bool:
     return False
 
 
-def fetch_news_items(session: requests.Session, publisher: str, url: str, limit: int = 10) -> List[dict]:
-    try:
-        response = session.get(url, timeout=30)
-        response.raise_for_status()
-        root = ET.fromstring(response.content)
-        items = []
-        seen_titles = set()
+def is_allowed_news_link(link: str, publisher: str) -> bool:
+    if not link:
+        return False
 
-        for item in root.findall(".//item"):
-            raw_title = (item.findtext("title") or "").strip()
-            title = normalize_news_title(raw_title)
-            link = (item.findtext("link") or "").strip()
-            pub_date = (item.findtext("pubDate") or "").strip()
+    if publisher == "Bloomberg日本語":
+        return bool(BLOOMBERG_ALLOWED_LINK_PATTERN.search(link))
 
-            if (
-                not title
-                or not link
-                or not is_japanese_title(title)
-                or is_noise_news_title(title, publisher)
-                or title in seen_titles
-            ):
-                continue
+    return True
 
-            seen_titles.add(title)
-            items.append({"title": title, "link": link, "pub_date": pub_date})
-            if len(items) >= limit:
-                break
 
-        return items or [{"title": "日本語ニュースを取得できませんでした。", "link": "", "pub_date": ""}]
-    except Exception as exc:
-        LOGGER.exception("ニュース取得失敗: %s", url)
-        return [{"title": f"日本語ニュース取得失敗: {exc}", "link": "", "pub_date": ""}]
+def fetch_news_items(session: requests.Session, publisher: str, urls: List[str], limit: int = 10) -> List[dict]:
+    items: List[dict] = []
+    seen_titles = set()
+    errors: List[str] = []
+
+    for url in urls:
+        try:
+            response = session.get(url, timeout=30)
+            response.raise_for_status()
+            root = ET.fromstring(response.content)
+
+            for item in root.findall(".//item"):
+                raw_title = (item.findtext("title") or "").strip()
+                title = normalize_news_title(raw_title)
+                link = (item.findtext("link") or "").strip()
+                pub_date = (item.findtext("pubDate") or "").strip()
+
+                if (
+                    not title
+                    or not link
+                    or not is_allowed_news_link(link, publisher)
+                    or not is_japanese_title(title)
+                    or is_noise_news_title(title, publisher)
+                    or title in seen_titles
+                ):
+                    continue
+
+                seen_titles.add(title)
+                items.append({"title": title, "link": link, "pub_date": pub_date})
+                if len(items) >= limit:
+                    return items
+        except Exception as exc:
+            LOGGER.exception("ニュース取得失敗: %s", url)
+            errors.append(f"{url}: {exc}")
+
+    if items:
+        return items
+
+    if errors:
+        return [{"title": f"日本語ニュース取得失敗: {' / '.join(errors)}", "link": "", "pub_date": ""}]
+
+    return [{"title": "日本語ニュースを取得できませんでした。", "link": "", "pub_date": ""}]
 
 
 def fetch_all_data() -> Dict[str, List[MarketRow]]:
