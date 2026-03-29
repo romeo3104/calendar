@@ -1,6 +1,9 @@
 name: deploy-calendar-midnight
 
 on:
+  push:
+    branches:
+      - main
   workflow_dispatch:
   schedule:
     - cron: '0 15 * * *'
@@ -41,7 +44,7 @@ jobs:
         run: |
           python scripts/build_calendar.py
 
-      - name: 世界経済サマリー生成（深夜0時JST定期）
+      - name: 世界経済サマリー生成
         env:
           TZ: Asia/Tokyo
         run: |

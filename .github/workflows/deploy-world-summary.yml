@@ -14,15 +14,13 @@ env:
 
 permissions:
   contents: read
-  pages: write
-  id-token: write
 
 concurrency:
-  group: pages
+  group: world-summary
   cancel-in-progress: true
 
 jobs:
-  build:
+  build-world-summary:
     runs-on: ubuntu-latest
 
     steps:
@@ -52,23 +50,3 @@ jobs:
           TZ: Asia/Tokyo
         run: |
           python scripts/build_world_summary.py
-
-      - name: Pages 設定
-        uses: actions/configure-pages@v5
-
-      - name: 生成物アップロード
-        uses: actions/upload-pages-artifact@v4
-        with:
-          path: ./dist
-
-  deploy:
-    needs: build
-    runs-on: ubuntu-latest
-    environment:
-      name: github-pages
-      url: ${{ steps.deployment.outputs.page_url }}
-
-    steps:
-      - name: Pages へデプロイ
-        id: deployment
-        uses: actions/deploy-pages@v4
