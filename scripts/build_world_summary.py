@@ -1457,6 +1457,17 @@ def is_allowed_news_link(link: str, publisher: str) -> bool:
     return True
 
 
+def is_allowed_news_source(source_name: str, publisher: str) -> bool:
+    if publisher != "Bloomberg日本語":
+        return True
+
+    if not source_name:
+        return True
+
+    normalized = html.unescape(source_name).strip().lower()
+    return "bloomberg" in normalized or "ブルームバーグ" in normalized
+
+
 def fetch_news_items(session: requests.Session, publisher: str, urls: List[str], limit: int = 10) -> List[dict]:
     items: List[dict] = []
     seen_titles = set()
@@ -1473,11 +1484,13 @@ def fetch_news_items(session: requests.Session, publisher: str, urls: List[str],
                 title = normalize_news_title(raw_title)
                 link = (item.findtext("link") or "").strip()
                 pub_date = (item.findtext("pubDate") or "").strip()
+                source_name = (item.findtext("source") or "").strip()
 
                 if (
                     not title
                     or not link
                     or not is_allowed_news_link(link, publisher)
+                    or not is_allowed_news_source(source_name, publisher)
                     or not is_japanese_title(title)
                     or is_noise_news_title(title, publisher)
                     or title in seen_titles
@@ -1485,7 +1498,12 @@ def fetch_news_items(session: requests.Session, publisher: str, urls: List[str],
                     continue
 
                 seen_titles.add(title)
-                items.append({"title": title, "link": link, "pub_date": pub_date})
+                items.append({
+                    "title": title,
+                    "link": link,
+                    "pub_date": pub_date,
+                    "source": source_name,
+                })
                 if len(items) >= limit:
                     return items
         except Exception as exc:
