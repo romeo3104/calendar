@@ -1,13 +1,9 @@
-name: deploy-calendar
+name: deploy-calendar-midnight
 
 on:
-  push:
-    branches:
-      - main
   workflow_dispatch:
   schedule:
-    - cron: '10 20 * * 1-5'
-    - cron: '10 21 * * 1-5'
+    - cron: '0 15 * * *'
 
 env:
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
@@ -45,19 +41,11 @@ jobs:
         run: |
           python scripts/build_calendar.py
 
-      - name: 世界経済サマリー生成（push / 手動）
-        if: github.event_name != 'schedule'
+      - name: 世界経済サマリー生成（深夜0時JST定期）
         env:
           TZ: Asia/Tokyo
         run: |
           python scripts/build_world_summary.py --force
-
-      - name: 世界経済サマリー生成（定期）
-        if: github.event_name == 'schedule'
-        env:
-          TZ: Asia/Tokyo
-        run: |
-          python scripts/build_world_summary.py
 
       - name: Pages 設定
         uses: actions/configure-pages@v5
