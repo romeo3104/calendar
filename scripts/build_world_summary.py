@@ -129,9 +129,7 @@ class MarketRow:
 
     @property
     def display_source(self) -> str:
-        if self.note:
-            return f"{self.source}（{self.note}）"
-        return self.source
+        return f"{self.source}（{self.note}）" if self.note else self.source
 
 
 def setup_logging() -> None:
@@ -172,6 +170,7 @@ def fetch_yahoo_row(category: str, spec: dict) -> MarketRow:
         ticker = yf.Ticker(symbol)
         hist = ticker.history(period="7d", interval="1d", auto_adjust=False, actions=False)
         hist = hist.dropna(subset=["Close"])
+
         if hist.empty:
             raise ValueError("価格履歴が取得できませんでした。")
 
@@ -552,7 +551,7 @@ def build_overview(results: Dict[str, List[MarketRow]]) -> List[str]:
     lines.append(f"日本株は、日経225 {format_value(nikkei)}、TOPIX {format_value(topix)} の並びでみると、主力株と広範な市場のどちらが強いかを切り分けやすい状態です。")
     lines.append(f"東証REITは {format_value(reit)} です。{reit.note if reit and reit.note else '元指数が未取得の場合は代替取得を表示します。'}")
     lines.append(f"為替は、ドル円 {format_value(usd_jpy)}、ユーロドル {format_value(eur_usd)}、ドルインデックス {format_value(dxy)} を並べると、ドル高 / ドル安の方向を確認しやすいです。")
-    lines.append(f"高金利・資源国通貨の参考として、豪ドル円 {format_value(aud_jpy)}、メキシコペソ円 {format_value(mxn_jpy)} を入れています。取得時点差がある場合は表の取得時刻を確認してください。")
+    lines.append(f"高金利・資源国通貨の参考として、豪ドル円 {format_value(aud_jpy)}、メキシコペソ円 {format_value(mxn_jpy)} を入れています。")
     lines.append(f"金利は、米10年 {format_value(us10)} と日本10年 {format_value(jp10)} を基準に、日米の長期金利差と為替の関係を確認できる構成です。")
     lines.append(f"商品は、金 {format_value(gold)}、WTI原油 {format_value(oil)}、銅 {format_value(copper)} を中心に、安全資産・エネルギー・景気敏感の3方向を見ます。")
     lines.append(f"暗号資産は、BTC/USD {format_value(btc)} と ETH/USD {format_value(eth)} を中心に、リスク選好の補助指標として扱います。")
@@ -574,8 +573,6 @@ def build_category_sections(results: Dict[str, List[MarketRow]]) -> str:
                   <td>{html.escape(format_value(row))}</td>
                   <td>{html.escape(format_change(row))}</td>
                   <td>{html.escape(format_change_pct(row))}</td>
-                  <td>{html.escape(row.display_source)}</td>
-                  <td>{html.escape(row.acquired_at or '未確認')}</td>
                 </tr>
                 """
             )
@@ -592,8 +589,6 @@ def build_category_sections(results: Dict[str, List[MarketRow]]) -> str:
                       <th>数値</th>
                       <th>前日比</th>
                       <th>騰落率</th>
-                      <th>取得元</th>
-                      <th>取得時刻</th>
                     </tr>
                   </thead>
                   <tbody>
@@ -693,16 +688,20 @@ def build_news_sections(news_map: Dict[str, List[dict]]) -> str:
     return "\n".join(sections)
 
 
-def build_source_list() -> str:
-    items = [
-        "Yahoo Finance / Yahoo!ファイナンス",
-        "JPX",
-        "財務省",
-        "Investing.com",
-        "Reuters日本語",
-        "Bloomberg日本語",
-    ]
-    return "".join(f"<li>{html.escape(item)}</li>" for item in items)
+def build_source_list(results: Dict[str, List[MarketRow]]) -> str:
+    sources = []
+    seen = set()
+
+    for category in CATEGORY_ORDER:
+        for row in results.get(category, []):
+            label = row.display_source
+            if label in seen:
+                continue
+            seen.add(label)
+            sources.append(label)
+
+    sources.extend([name for name in ("Reuters日本語", "Bloomberg日本語") if name not in seen])
+    return "".join(f"<li>{html.escape(item)}</li>" for item in sources)
 
 
 def build_summary_html(results: Dict[str, List[MarketRow]], news_map: Dict[str, List[dict]], generated_at_jst: datetime, generated_at_ny: datetime) -> str:
@@ -711,7 +710,7 @@ def build_summary_html(results: Dict[str, List[MarketRow]], news_map: Dict[str, 
     sections_html = build_category_sections(results)
     missing_html = build_missing_section(results)
     news_html = build_news_sections(news_map)
-    sources_html = build_source_list()
+    sources_html = build_source_list(results)
 
     return f"""<!DOCTYPE html>
 <html lang="ja">
@@ -727,7 +726,7 @@ def build_summary_html(results: Dict[str, List[MarketRow]], news_map: Dict[str, 
       <div class="year-nav">
         <a class="year-nav-button" href="../index.html">カレンダーへ戻る</a>
       </div>
-      <div class="year-range-note">取得時点差あり。取得時刻列を確認してください。</div>
+      <div class="year-range-note">取得時点差あり</div>
     </div>
     <h1>世界経済サマリー</h1>
     <p class="summary-meta">生成時刻 JST: {html.escape(generated_at_jst.strftime("%Y-%m-%d %H:%M:%S"))} / New York: {html.escape(generated_at_ny.strftime("%Y-%m-%d %H:%M:%S"))}</p>
