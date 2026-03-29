@@ -107,6 +107,10 @@ INVESTING_TOPIX_URLS = [
     "https://www.investing.com/indices/topix",
     "https://jp.investing.com/indices/topix",
 ]
+INVESTING_TOPIX_HISTORICAL_URLS = [
+    "https://jp.investing.com/indices/topix-historical-data",
+    "https://www.investing.com/indices/topix-historical-data",
+]
 INVESTING_REIT_URLS = [
     "https://jp.investing.com/indices/topix-reit-market",
     "https://www.investing.com/indices/topix-reit-market",
@@ -983,6 +987,52 @@ def fetch_us_2y_from_investing(session: requests.Session) -> MarketRow:
     )
 
 
+def fetch_topix_from_investing_historical(session: requests.Session) -> MarketRow:
+    errors: List[str] = []
+
+    for url in INVESTING_TOPIX_HISTORICAL_URLS:
+        try:
+            response = session.get(url, timeout=30)
+            response.raise_for_status()
+            text = strip_html_tags(decode_response_content(response))
+            parsed = parse_investing_historical_latest_rows(
+                text=text,
+                section_markers=["## TOPIX 過去データ", "# TOPIX (TOPX)", "# TOPIX 過去のレート"],
+            )
+            if parsed is None:
+                errors.append(f"Investing.com TOPIX過去データ解析失敗: {url}")
+                continue
+
+            current, previous, change, change_pct, acquired_at = parsed
+            return MarketRow(
+                category="株式",
+                name="TOPIX",
+                value=current,
+                previous=previous,
+                change=change,
+                change_pct=change_pct,
+                source="Investing.com",
+                acquired_at=acquired_at,
+                note="過去データページから取得",
+            )
+        except Exception as exc:
+            LOGGER.exception("Investing TOPIX過去データ取得失敗: %s", url)
+            errors.append(f"{url}: {exc}")
+
+    return MarketRow(
+        category="株式",
+        name="TOPIX",
+        value=None,
+        previous=None,
+        change=None,
+        change_pct=None,
+        source="Investing.com",
+        acquired_at=None,
+        note="代替取得",
+        missing_reason=" / ".join(errors) if errors else "Investing.com から TOPIX 過去データを取得できませんでした。",
+    )
+
+
 def fetch_topix_from_investing(session: requests.Session) -> MarketRow:
     errors: List[str] = []
     for url in INVESTING_TOPIX_URLS:
@@ -1141,7 +1191,10 @@ def fetch_topix_from_yahoo_finance(session: requests.Session) -> MarketRow:
             )
 
             if row.previous is None or row.change is None or row.change_pct is None:
-                row = supplement_market_row(row, fetch_topix_from_investing(session), "一部をInvesting.comで補完")
+                row = supplement_market_row(row, fetch_topix_from_investing_historical(session), "一部をInvesting.com過去データで補完")
+
+            if row.previous is None or row.change is None or row.change_pct is None:
+                row = supplement_market_row(row, fetch_topix_from_investing(session), "一部をInvesting.com概要ページで補完")
 
             if row.previous is None or row.change is None or row.change_pct is None:
                 row = supplement_market_row(row, fetch_topix_from_jpx_realvalues(session), "一部をJPXリアルタイム指数一覧で補完")
@@ -1153,6 +1206,17 @@ def fetch_topix_from_yahoo_finance(session: requests.Session) -> MarketRow:
         except Exception as exc:
             LOGGER.exception("TOPIX取得失敗: %s", url)
             errors.append(f"{url}: {exc}")
+
+    fallback = fetch_topix_from_investing_historical(session)
+    if not fallback.is_missing:
+        fallback.note = "Yahoo!ファイナンス失敗時の代替取得" if not fallback.note else f"{fallback.note} / Yahoo!ファイナンス失敗時の代替取得"
+        if fallback.previous is None or fallback.change is None or fallback.change_pct is None:
+            fallback = supplement_market_row(fallback, fetch_topix_from_investing(session), "Yahoo!ファイナンス失敗時のInvesting.com概要ページ補完")
+        if fallback.previous is None or fallback.change is None or fallback.change_pct is None:
+            fallback = supplement_market_row(fallback, fetch_topix_from_jpx_realvalues(session), "Yahoo!ファイナンス失敗時のJPXリアルタイム指数一覧補完")
+        if fallback.previous is None or fallback.change is None or fallback.change_pct is None:
+            fallback = supplement_market_row(fallback, fetch_topix_from_jpx_quote(session), "Yahoo!ファイナンス失敗時のJPX個別指数補完")
+        return fallback
 
     fallback = fetch_topix_from_investing(session)
     if not fallback.is_missing:
@@ -1836,7 +1900,7 @@ def main() -> int:
 
     session = requests_session()
     results = unique_rows(fetch_all_data())
-    news_map = {publisher: fetch_news_items(session, publisher, url) for publisher, url in NEWS_SOURCES.items()}
+    news_map = {publisher: fetch_news_items(session, publisher, urls) for publisher, urls in NEWS_SOURCES.items()}
 
     now_jst = datetime.now(JST)
     now_ny = now_jst.astimezone(NY)
