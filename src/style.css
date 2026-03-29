@@ -107,7 +107,7 @@ a {
 
 .months-grid {
   display: grid;
-  grid-template-columns: repeat(3, minmax(320px, 1fr));
+  grid-template-columns: repeat(4, minmax(260px, 1fr));
   gap: 16px;
   align-items: stretch;
 }
@@ -244,16 +244,6 @@ a {
   margin-bottom: 0;
 }
 
-.summary-bullets {
-  margin: 0;
-  padding-left: 20px;
-}
-
-.summary-bullets li {
-  margin-bottom: 10px;
-  line-height: 1.8;
-}
-
 .summary-sections-grid {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
@@ -319,6 +309,12 @@ a {
 .summary-news-list li {
   margin-bottom: 10px;
   line-height: 1.7;
+}
+
+@media (max-width: 1600px) {
+  .months-grid {
+    grid-template-columns: repeat(3, minmax(280px, 1fr));
+  }
 }
 
 @media (max-width: 1200px) {
