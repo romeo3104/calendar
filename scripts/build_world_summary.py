@@ -54,6 +54,20 @@ NEWS_SOURCES = {
 JAPANESE_CHAR_PATTERN = re.compile(r"[ぁ-んァ-ヶ一-龠々ー]")
 NOISE_SUFFIX_PATTERN = re.compile(r"\s*[-|｜]\s*(Reuters|Bloomberg|ロイター|ブルームバーグ).*$", re.IGNORECASE)
 
+YAHOO_TOPIX_URL = "https://finance.yahoo.co.jp/quote/998405.T/"
+JPX_REIT_URLS = [
+    "https://www.jpx.co.jp/markets/indices/realvalues/index.html",
+    "https://www.jpx.co.jp/english/markets/indices/realvalues/01.html",
+]
+INVESTING_REIT_URLS = [
+    "https://jp.investing.com/indices/topix-reit-market",
+    "https://www.investing.com/indices/topix-reit-market",
+]
+MOF_JGB_CSV_URLS = [
+    "https://www.mof.go.jp/english/policy/jgbs/reference/interest_rate/historical/jgbcme_all.csv",
+    "https://www.mof.go.jp/jgbs/reference/interest_rate/historical/jgbcme_all.csv",
+    "https://www.mof.go.jp/jgbs/reference/interest_rate/jgbcm.csv",
+]
 INVESTING_JGB_URLS = {
     "日本国債5年利回り": "https://www.investing.com/rates-bonds/japan-5-year-bond-yield",
     "日本国債10年利回り": "https://www.investing.com/rates-bonds/japan-10-year-bond-yield",
@@ -68,8 +82,8 @@ YF_ITEMS = {
         {"name": "SOX", "symbol": "^SOX", "source": "Yahoo Finance"},
         {"name": "VIX", "symbol": "^VIX", "source": "Yahoo Finance"},
         {"name": "日経225", "symbol": "^N225", "source": "Yahoo Finance"},
-        {"name": "TOPIX", "symbol": "998405.T", "source": "Yahoo!ファイナンス"},
-        {"name": "東証REIT", "symbol": "1343.T", "source": "Yahoo!ファイナンス", "note": "代替取得: NEXT FUNDS 東証REIT指数連動型上場投信"},
+        {"name": "TOPIX", "symbol": "998405.T", "source": "Yahoo!ファイナンス", "custom_method": "yahoo_topix_page"},
+        {"name": "東証REIT", "symbol": "TREIT", "source": "JPX", "custom_method": "jpx_reit_page"},
     ],
     "為替": [
         {"name": "ドル円", "symbol": "JPY=X", "source": "Yahoo Finance"},
@@ -147,7 +161,12 @@ def should_run_now(force: bool) -> bool:
 
 def requests_session() -> requests.Session:
     session = requests.Session()
-    session.headers.update({"User-Agent": "Mozilla/5.0"})
+    session.headers.update(
+        {
+            "User-Agent": "Mozilla/5.0",
+            "Accept-Language": "ja,en-US;q=0.9,en;q=0.8",
+        }
+    )
     return session
 
 
@@ -166,6 +185,33 @@ def decode_response_content(response: requests.Response) -> str:
         except Exception:
             continue
     return response.text
+
+
+def strip_html_tags(raw_html: str) -> str:
+    text = re.sub(r"<script[\s\S]*?</script>", " ", raw_html, flags=re.IGNORECASE)
+    text = re.sub(r"<style[\s\S]*?</style>", " ", text, flags=re.IGNORECASE)
+    text = re.sub(r"<[^>]+>", " ", text)
+    return re.sub(r"\s+", " ", text).strip()
+
+
+def parse_decimal(text: Optional[str]) -> Optional[float]:
+    if text is None:
+        return None
+    normalized = text.replace(",", "").replace("＋", "+").replace("−", "-").strip()
+    if not normalized:
+        return None
+    try:
+        return float(normalized)
+    except Exception:
+        return None
+
+
+def extract_by_patterns(text: str, patterns: List[str]) -> Optional[str]:
+    for pattern in patterns:
+        match = re.search(pattern, text, re.IGNORECASE | re.DOTALL)
+        if match:
+            return match.group(1)
+    return None
 
 
 def fetch_yahoo_row(category: str, spec: dict) -> MarketRow:
@@ -210,111 +256,396 @@ def fetch_yahoo_row(category: str, spec: dict) -> MarketRow:
         return MarketRow(category, name, None, None, None, None, source, None, suffix, note, f"Yahoo取得失敗: {exc}")
 
 
-def parse_mof_jgb_rows(session: requests.Session) -> Dict[str, MarketRow]:
-    url = "https://www.mof.go.jp/jgbs/reference/interest_rate/jgbcm.csv"
+def fetch_topix_from_yahoo_finance(session: requests.Session) -> MarketRow:
     try:
-        response = session.get(url, timeout=30)
+        response = session.get(YAHOO_TOPIX_URL, timeout=30)
         response.raise_for_status()
-        text = decode_response_content(response)
-        reader = csv.reader(text.splitlines())
-        rows = [row for row in reader if row]
+        raw_html = decode_response_content(response)
+        text = strip_html_tags(raw_html)
 
-        header = None
-        data_rows = []
-        for row in rows:
-            if header is None and any("年" in cell for cell in row):
-                header = row
+        current_text = extract_by_patterns(
+            text,
+            [
+                r"TOPIX\s*998405\.T\s*([0-9,]+(?:\.[0-9]+)?)\s*前日比",
+                r"##\s*TOPIX\s*998405\.T\s*([0-9,]+(?:\.[0-9]+)?)\s*前日比",
+                r"TOPIXの指数情報・推移[\s\S]{0,400}?前日終値",
+            ],
+        )
+        if current_text is None:
+            current_text = extract_by_patterns(
+                text,
+                [r"TOPIX\s*998405\.T\s*([0-9,]+(?:\.[0-9]+)?)"],
+            )
+
+        previous_text = extract_by_patterns(
+            text,
+            [
+                r"前日終値\s*([0-9,]+(?:\.[0-9]+)?)",
+            ],
+        )
+
+        change_text = extract_by_patterns(
+            text,
+            [
+                r"前日比\s*([+-]?[0-9,]+(?:\.[0-9]+)?)\s*\(",
+                r"前日比\s*([+-−＋]?[0-9,]+(?:\.[0-9]+)?)",
+            ],
+        )
+        change_pct_text = extract_by_patterns(
+            text,
+            [
+                r"前日比\s*[+-−＋]?[0-9,]+(?:\.[0-9]+)?\s*\(([+-]?[0-9.]+)%\)",
+            ],
+        )
+
+        current = parse_decimal(current_text)
+        previous = parse_decimal(previous_text)
+        change = parse_decimal(change_text)
+        change_pct = parse_decimal(change_pct_text)
+
+        if current is None:
+            raise ValueError("Yahoo!ファイナンスのTOPIXページから現在値を抽出できませんでした。")
+
+        if change is None and current is not None and previous is not None:
+            change = current - previous
+
+        if change_pct is None and change is not None and previous not in (None, 0):
+            change_pct = (change / previous) * 100
+
+        return MarketRow(
+            category="株式",
+            name="TOPIX",
+            value=current,
+            previous=previous,
+            change=change,
+            change_pct=change_pct,
+            source="Yahoo!ファイナンス",
+            acquired_at=None,
+        )
+    except Exception as exc:
+        LOGGER.exception("TOPIX取得失敗")
+        return MarketRow(
+            category="株式",
+            name="TOPIX",
+            value=None,
+            previous=None,
+            change=None,
+            change_pct=None,
+            source="Yahoo!ファイナンス",
+            acquired_at=None,
+            missing_reason=f"Yahoo!ファイナンスTOPIXページ取得失敗: {exc}",
+        )
+
+
+def parse_jpx_reit_from_text(text: str) -> Optional[tuple[float, float]]:
+    patterns = [
+        r"東証REIT指数[^0-9+-]{0,80}([0-9,]+(?:\.[0-9]+)?)\s*([+-]?[0-9,]+(?:\.[0-9]+)?)",
+        r"Tokyo Stock Exchange REIT(?: Index)?[^0-9+-]{0,80}([0-9,]+(?:\.[0-9]+)?)\s*([+-]?[0-9,]+(?:\.[0-9]+)?)",
+        r"銘柄選定型指数（REIT）[\s\S]{0,400}?東証REIT指数[^0-9+-]{0,80}([0-9,]+(?:\.[0-9]+)?)\s*([+-]?[0-9,]+(?:\.[0-9]+)?)",
+    ]
+    for pattern in patterns:
+        match = re.search(pattern, text, re.IGNORECASE | re.DOTALL)
+        if match:
+            current = parse_decimal(match.group(1))
+            change = parse_decimal(match.group(2))
+            if current is not None and change is not None:
+                return current, change
+    return None
+
+
+def fetch_tse_reit_from_jpx(session: requests.Session) -> MarketRow:
+    errors: List[str] = []
+    for url in JPX_REIT_URLS:
+        try:
+            response = session.get(url, timeout=30)
+            response.raise_for_status()
+            raw_html = decode_response_content(response)
+            normalized_text = strip_html_tags(raw_html)
+            parsed = parse_jpx_reit_from_text(raw_html) or parse_jpx_reit_from_text(normalized_text)
+            if parsed is None:
+                errors.append(f"JPXページ解析失敗: {url}")
                 continue
-            if header is not None:
-                data_rows.append(row)
 
-        if header is None or not data_rows:
-            raise ValueError("財務省CSVのヘッダー解析に失敗しました。")
+            current, change = parsed
+            previous = current - change
+            change_pct = None if previous == 0 else (change / previous) * 100
 
-        latest = None
-        for row in reversed(data_rows):
-            if len(row) >= 2 and any(cell.strip() for cell in row):
-                latest = row
-                break
-        if latest is None:
-            raise ValueError("財務省CSVにデータ行がありません。")
+            return MarketRow(
+                category="株式",
+                name="東証REIT",
+                value=current,
+                previous=previous,
+                change=change,
+                change_pct=change_pct,
+                source="JPX",
+                acquired_at=None,
+            )
+        except Exception as exc:
+            LOGGER.exception("JPX 東証REIT取得失敗: %s", url)
+            errors.append(f"{url}: {exc}")
 
-        header_map = {cell.strip(): idx for idx, cell in enumerate(header)}
-        date_idx = header_map.get("基準日", 0)
-        targets = {"5年": "日本国債5年利回り", "10年": "日本国債10年利回り", "30年": "日本国債30年利回り"}
+    return fetch_tse_reit_from_investing(session, errors)
 
-        result = {}
-        for tenor, name in targets.items():
-            idx = header_map[tenor]
-            current_text = latest[idx].strip() if idx < len(latest) else ""
-            date_text = latest[date_idx].strip() if date_idx < len(latest) else ""
 
-            if not current_text:
-                result[name] = MarketRow("日本国債", name, None, None, None, None, "財務省", date_text or None, "%", missing_reason="財務省CSVの最新行に値がありません。")
+def fetch_tse_reit_from_investing(session: requests.Session, prior_errors: Optional[List[str]] = None) -> MarketRow:
+    errors = list(prior_errors or [])
+    for url in INVESTING_REIT_URLS:
+        try:
+            response = session.get(url, timeout=30)
+            response.raise_for_status()
+            text = strip_html_tags(response.text)
+
+            current_text = extract_by_patterns(
+                text,
+                [
+                    r"東証REIT指数\s*\(TREIT\)\s*東京\s*通貨\s*JPY\s*ウォッチリストに加える\s*([0-9,]+(?:\.[0-9]+)?)",
+                    r"Tokyo Stock Exchange REIT\s*\(TREIT\)\s*Tokyo\s*Currency\s*in\s*JPY\s*Add to Watchlist\s*([0-9,]+(?:\.[0-9]+)?)",
+                ],
+            )
+            change_text = extract_by_patterns(
+                text,
+                [
+                    r"ウォッチリストに加える\s*[0-9,]+(?:\.[0-9]+)?\s*([+-]?[0-9,]+(?:\.[0-9]+)?)\s*\(",
+                    r"Add to Watchlist\s*[0-9,]+(?:\.[0-9]+)?\s*([+-]?[0-9,]+(?:\.[0-9]+)?)\s*\(",
+                ],
+            )
+            previous_text = extract_by_patterns(
+                text,
+                [
+                    r"前日終値\s*([0-9,]+(?:\.[0-9]+)?)",
+                    r"Prev\. Close\s*([0-9,]+(?:\.[0-9]+)?)",
+                ],
+            )
+            change_pct_text = extract_by_patterns(
+                text,
+                [
+                    r"ウォッチリストに加える\s*[0-9,]+(?:\.[0-9]+)?\s*[+-]?[0-9,]+(?:\.[0-9]+)?\s*\(([+-]?[0-9.]+)%\)",
+                    r"Add to Watchlist\s*[0-9,]+(?:\.[0-9]+)?\s*[+-]?[0-9,]+(?:\.[0-9]+)?\s*\(([+-]?[0-9.]+)%\)",
+                ],
+            )
+
+            current = parse_decimal(current_text)
+            change = parse_decimal(change_text)
+            previous = parse_decimal(previous_text)
+            change_pct = parse_decimal(change_pct_text)
+
+            if current is None:
+                errors.append(f"Investing.com 東証REIT解析失敗: {url}")
                 continue
 
-            current = float(current_text)
-            previous = None
-            for row in reversed(data_rows[:-1]):
-                if idx < len(row) and row[idx].strip():
-                    previous = float(row[idx].strip())
+            if change is None and current is not None and previous is not None:
+                change = current - previous
+
+            if previous is None and current is not None and change is not None:
+                previous = current - change
+
+            if change_pct is None and change is not None and previous not in (None, 0):
+                change_pct = (change / previous) * 100
+
+            return MarketRow(
+                category="株式",
+                name="東証REIT",
+                value=current,
+                previous=previous,
+                change=change,
+                change_pct=change_pct,
+                source="Investing.com",
+                acquired_at=None,
+                note="代替取得",
+            )
+        except Exception as exc:
+            LOGGER.exception("Investing 東証REIT取得失敗: %s", url)
+            errors.append(f"{url}: {exc}")
+
+    return MarketRow(
+        category="株式",
+        name="東証REIT",
+        value=None,
+        previous=None,
+        change=None,
+        change_pct=None,
+        source="JPX",
+        acquired_at=None,
+        missing_reason=" / ".join(errors) if errors else "JPXおよびInvesting.comから取得できませんでした。",
+    )
+
+
+def normalize_header(value: str) -> str:
+    return re.sub(r"\s+", "", value).strip().lower()
+
+
+def find_header_index(header_map: Dict[str, int], aliases: List[str]) -> Optional[int]:
+    for alias in aliases:
+        key = normalize_header(alias)
+        if key in header_map:
+            return header_map[key]
+    return None
+
+
+def parse_mof_jgb_rows(session: requests.Session) -> Dict[str, MarketRow]:
+    last_error = None
+
+    for url in MOF_JGB_CSV_URLS:
+        try:
+            response = session.get(url, timeout=30)
+            response.raise_for_status()
+            text = decode_response_content(response)
+            reader = csv.reader(text.splitlines())
+            rows = [row for row in reader if row and any(cell.strip() for cell in row)]
+            if not rows:
+                raise ValueError("CSVが空です。")
+
+            header_row = rows[0]
+            data_rows = rows[1:]
+            header_map = {normalize_header(cell): idx for idx, cell in enumerate(header_row)}
+
+            date_idx = find_header_index(header_map, ["基準日", "Date"])
+            idx_5 = find_header_index(header_map, ["5年", "5Year"])
+            idx_10 = find_header_index(header_map, ["10年", "10Year"])
+            idx_30 = find_header_index(header_map, ["30年", "30Year"])
+
+            if date_idx is None or idx_5 is None or idx_10 is None or idx_30 is None:
+                raise ValueError(f"必要列を検出できませんでした。 header={header_row}")
+
+            latest_values = {"日本国債5年利回り": None, "日本国債10年利回り": None, "日本国債30年利回り": None}
+            previous_values = {"日本国債5年利回り": None, "日本国債10年利回り": None, "日本国債30年利回り": None}
+            latest_dates = {"日本国債5年利回り": None, "日本国債10年利回り": None, "日本国債30年利回り": None}
+            index_map = {
+                "日本国債5年利回り": idx_5,
+                "日本国債10年利回り": idx_10,
+                "日本国債30年利回り": idx_30,
+            }
+
+            for row in reversed(data_rows):
+                for name, idx in index_map.items():
+                    if idx >= len(row):
+                        continue
+                    value = parse_decimal(row[idx])
+                    if value is None:
+                        continue
+                    if latest_values[name] is None:
+                        latest_values[name] = value
+                        latest_dates[name] = row[date_idx] if date_idx < len(row) else None
+                    elif previous_values[name] is None:
+                        previous_values[name] = value
+
+                if all(latest_values[name] is not None for name in latest_values) and all(previous_values[name] is not None for name in previous_values):
                     break
 
-            change = None if previous is None else current - previous
-            change_pct = None if previous in (None, 0) else (change / previous) * 100
-            result[name] = MarketRow("日本国債", name, current, previous, change, change_pct, "財務省", date_text or None, "%")
+            result: Dict[str, MarketRow] = {}
+            for name in ("日本国債5年利回り", "日本国債10年利回り", "日本国債30年利回り"):
+                current = latest_values[name]
+                previous = previous_values[name]
+                if current is None:
+                    result[name] = MarketRow(
+                        category="日本国債",
+                        name=name,
+                        value=None,
+                        previous=None,
+                        change=None,
+                        change_pct=None,
+                        source="財務省",
+                        acquired_at=None,
+                        suffix="%",
+                        missing_reason="財務省CSVの最新営業日データを検出できませんでした。",
+                    )
+                    continue
 
-        return result
-    except Exception as exc:
-        LOGGER.exception("財務省JGB取得失敗")
-        return {
-            "日本国債5年利回り": MarketRow("日本国債", "日本国債5年利回り", None, None, None, None, "財務省", None, "%", missing_reason=f"財務省取得失敗: {exc}"),
-            "日本国債10年利回り": MarketRow("日本国債", "日本国債10年利回り", None, None, None, None, "財務省", None, "%", missing_reason=f"財務省取得失敗: {exc}"),
-            "日本国債30年利回り": MarketRow("日本国債", "日本国債30年利回り", None, None, None, None, "財務省", None, "%", missing_reason=f"財務省取得失敗: {exc}"),
-        }
+                change = None if previous is None else current - previous
+                change_pct = None if previous in (None, 0) else (change / previous) * 100
+                result[name] = MarketRow(
+                    category="日本国債",
+                    name=name,
+                    value=current,
+                    previous=previous,
+                    change=change,
+                    change_pct=change_pct,
+                    source="財務省",
+                    acquired_at=latest_dates[name],
+                    suffix="%",
+                )
+            return result
+
+        except Exception as exc:
+            LOGGER.exception("財務省JGB取得失敗: %s", url)
+            last_error = exc
+
+    error_message = f"財務省取得失敗: {last_error}" if last_error else "財務省取得失敗"
+    return {
+        "日本国債5年利回り": MarketRow("日本国債", "日本国債5年利回り", None, None, None, None, "財務省", None, "%", missing_reason=error_message),
+        "日本国債10年利回り": MarketRow("日本国債", "日本国債10年利回り", None, None, None, None, "財務省", None, "%", missing_reason=error_message),
+        "日本国債30年利回り": MarketRow("日本国債", "日本国債30年利回り", None, None, None, None, "財務省", None, "%", missing_reason=error_message),
+    }
 
 
 def parse_first_float(text: str, pattern: str) -> Optional[float]:
     match = re.search(pattern, text, re.IGNORECASE | re.DOTALL)
     if not match:
         return None
-    try:
-        return float(match.group(1).replace(",", ""))
-    except Exception:
-        return None
+    return parse_decimal(match.group(1))
 
 
 def fetch_investing_jgb_row(session: requests.Session, name: str, url: str) -> MarketRow:
     try:
         response = session.get(url, timeout=30)
         response.raise_for_status()
-        text = response.text
+        text = strip_html_tags(response.text)
 
-        current = parse_first_float(text, r'Add to Watchlist.*?([0-9]+\.[0-9]+)')
-        if current is None:
-            current = parse_first_float(text, r'Prev\. Close\s*([0-9]+\.[0-9]+)')
-        previous = parse_first_float(text, r'Prev\. Close\s*([0-9]+\.[0-9]+)')
+        current = extract_by_patterns(
+            text,
+            [
+                r"Add to Watchlist\s*([0-9,]+(?:\.[0-9]+)?)\s*[+-]?[0-9,]+(?:\.[0-9]+)?\s*\(",
+                r"ウォッチリストに加える\s*([0-9,]+(?:\.[0-9]+)?)\s*[+-]?[0-9,]+(?:\.[0-9]+)?\s*\(",
+            ],
+        )
+        previous = extract_by_patterns(
+            text,
+            [
+                r"Prev\. Close\s*([0-9,]+(?:\.[0-9]+)?)",
+                r"前日終値\s*([0-9,]+(?:\.[0-9]+)?)",
+            ],
+        )
 
-        if current is None:
-            raise ValueError("Investing.com から数値を抽出できませんでした。")
+        current_value = parse_decimal(current)
+        previous_value = parse_decimal(previous)
+        if current_value is None:
+            raise ValueError("Investing.comから現在値を抽出できませんでした。")
 
-        acquired_at = None
-        time_match = re.search(r'(Real-time Data|Closed)·([^<\n]+)', text)
-        if time_match:
-            acquired_at = time_match.group(2).strip()
+        change = None if previous_value is None else current_value - previous_value
+        change_pct = None if previous_value in (None, 0) else (change / previous_value) * 100
 
-        change = None if previous is None else current - previous
-        change_pct = None if previous in (None, 0) else (change / previous) * 100
-
-        return MarketRow("日本国債", name, current, previous, change, change_pct, "Investing.com", acquired_at, "%", "代替取得")
+        return MarketRow(
+            category="日本国債",
+            name=name,
+            value=current_value,
+            previous=previous_value,
+            change=change,
+            change_pct=change_pct,
+            source="Investing.com",
+            acquired_at=None,
+            suffix="%",
+            note="代替取得",
+        )
     except Exception as exc:
         LOGGER.exception("Investing JGB取得失敗: %s", name)
-        return MarketRow("日本国債", name, None, None, None, None, "Investing.com", None, "%", "代替取得", f"Investing取得失敗: {exc}")
+        return MarketRow(
+            category="日本国債",
+            name=name,
+            value=None,
+            previous=None,
+            change=None,
+            change_pct=None,
+            source="Investing.com",
+            acquired_at=None,
+            suffix="%",
+            note="代替取得",
+            missing_reason=f"Investing取得失敗: {exc}",
+        )
 
 
 def fetch_jgb_rows(session: requests.Session) -> List[MarketRow]:
     primary = parse_mof_jgb_rows(session)
-    rows = []
+    rows: List[MarketRow] = []
 
     for name in ("日本国債5年利回り", "日本国債10年利回り", "日本国債30年利回り"):
         row = primary[name]
@@ -377,7 +708,13 @@ def fetch_all_data() -> Dict[str, List[MarketRow]]:
 
     for category in ("株式", "為替", "米国債", "商品", "暗号資産"):
         for spec in YF_ITEMS[category]:
-            results[category].append(fetch_yahoo_row(category, spec))
+            custom_method = spec.get("custom_method")
+            if custom_method == "yahoo_topix_page":
+                results[category].append(fetch_topix_from_yahoo_finance(session))
+            elif custom_method == "jpx_reit_page":
+                results[category].append(fetch_tse_reit_from_jpx(session))
+            else:
+                results[category].append(fetch_yahoo_row(category, spec))
 
     results["日本国債"] = fetch_jgb_rows(session)
     return results
