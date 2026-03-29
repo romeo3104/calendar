@@ -14,6 +14,7 @@ from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
 from typing import Dict, List, Optional
+from urllib.parse import urljoin
 from zoneinfo import ZoneInfo
 
 import requests
@@ -48,18 +49,23 @@ NEWS_SOURCES = {
     "Bloomberg日本語": [
         (
             "https://news.google.com/rss/search?"
-            "q=site:bloomberg.co.jp/news/articles%20when:2d"
+            "q=site:bloomberg.com/jp/news/articles%20when:3d"
             "&hl=ja&gl=JP&ceid=JP:ja"
         ),
         (
             "https://news.google.com/rss/search?"
-            "q=site:bloomberg.com/jp%20when:2d"
+            "q=site:bloomberg.co.jp/news/articles%20when:3d"
             "&hl=ja&gl=JP&ceid=JP:ja"
         ),
         (
             "https://news.google.com/rss/search?"
-            "q=(site:bloomberg.co.jp/news/articles%20OR%20site:bloomberg.co.jp/news)%20"
-            "(市場%20OR%20経済%20OR%20株式%20OR%20債券%20OR%20原油%20OR%20為替%20OR%20金)%20when:7d"
+            "q=(site:bloomberg.com/jp/news/articles%20OR%20site:bloomberg.co.jp/news/articles)%20"
+            "(市場%20OR%20経済%20OR%20株式%20OR%20債券%20OR%20原油%20OR%20為替%20OR%20金%20OR%20政策)%20when:7d"
+            "&hl=ja&gl=JP&ceid=JP:ja"
+        ),
+        (
+            "https://news.google.com/rss/search?"
+            "q=site:bloomberg.com/jp/latest%20when:2d"
             "&hl=ja&gl=JP&ceid=JP:ja"
         ),
     ],
@@ -79,10 +85,32 @@ NEWS_TITLE_EXCLUDE_PATTERN = re.compile(
 
 
 BLOOMBERG_ALLOWED_LINK_PATTERN = re.compile(
-    r"https?://(?:www\\.)?(?:bloomberg\\.co\\.jp/news/|bloomberg\\.com/jp/)",
+    r"https?://(?:www\.)?(?:"
+    r"bloomberg\.co\.jp/news/|"
+    r"bloomberg\.com/jp(?:/news/|/latest)?|"
+    r"news\.google\.com/(?:rss/)?articles/"
+    r")",
     re.IGNORECASE,
 )
 
+BLOOMBERG_JP_FALLBACK_URLS = [
+    "https://www.bloomberg.com/jp",
+    "https://www.bloomberg.co.jp/",
+]
+BLOOMBERG_JP_ARTICLE_PATH_PATTERN = re.compile(
+    r"(?:href=|data-url=|content=)[\"']"
+    r"(?P<link>(?:https?://(?:www\.)?bloomberg\.(?:co\.jp|com)/jp/news/articles/[^\"'#? ]+(?:\?[^\"'# ]*)?|"
+    r"https?://(?:www\.)?bloomberg\.co\.jp/news/articles/[^\"'#? ]+(?:\?[^\"'# ]*)?|"
+    r"/jp/news/articles/[^\"'#? ]+(?:\?[^\"'# ]*)?|"
+    r"/news/articles/[^\"'#? ]+(?:\?[^\"'# ]*)?))"
+    r"[\"']"
+    r"[^>]*>(?P<title>.*?)</a>",
+    re.IGNORECASE | re.DOTALL,
+)
+BLOOMBERG_JP_OG_URL_PATTERN = re.compile(
+    r"<meta[^>]+property=[\"']og:url[\"'][^>]+content=[\"']([^\"']+)[\"']",
+    re.IGNORECASE,
+)
 
 YAHOO_TOPIX_URLS = [
     "https://finance.yahoo.co.jp/quote/998405.T",
@@ -612,6 +640,47 @@ def fill_derived_fields(
         change_pct = (change / previous) * 100
 
     return previous, change, change_pct
+
+
+def normalize_bloomberg_article_url(url: str) -> str:
+    normalized = html.unescape(url).strip()
+    if not normalized:
+        return ""
+    if normalized.startswith("//"):
+        normalized = f"https:{normalized}"
+    if normalized.startswith("/jp/"):
+        normalized = urljoin("https://www.bloomberg.com", normalized)
+    elif normalized.startswith("/news/"):
+        normalized = urljoin("https://www.bloomberg.co.jp", normalized)
+    normalized = normalized.replace("https://bloomberg.com/", "https://www.bloomberg.com/")
+    normalized = normalized.replace("https://bloomberg.co.jp/", "https://www.bloomberg.co.jp/")
+    return normalized
+
+
+def parse_yahoo_topix_history_rows(text: str) -> Optional[tuple[float, Optional[float], Optional[float], Optional[float], Optional[str]]]:
+    matches = list(
+        re.finditer(
+            r"(20\d{2}年\d{1,2}月\d{1,2}日)\s+"
+            r"([0-9,]+(?:\.[0-9]+)?)\s+"
+            r"([0-9,]+(?:\.[0-9]+)?)\s+"
+            r"([0-9,]+(?:\.[0-9]+)?)\s+"
+            r"([0-9,]+(?:\.[0-9]+)?)",
+            text,
+        )
+    )
+    if not matches:
+        return None
+
+    current = parse_decimal(matches[0].group(5))
+    previous = parse_decimal(matches[1].group(5)) if len(matches) >= 2 else None
+    acquired_at = matches[0].group(1)
+    if current is None:
+        return None
+
+    change = None if previous is None else current - previous
+    change_pct = None if previous in (None, 0) else (change / previous) * 100
+    previous, change, change_pct = fill_derived_fields(current, previous, change, change_pct)
+    return current, previous, change, change_pct, acquired_at
 
 
 def parse_yahoo_topix_snapshot(text: str) -> Optional[tuple[float, Optional[float], Optional[float], Optional[float], Optional[str]]]:
@@ -1174,7 +1243,10 @@ def fetch_topix_from_yahoo_finance(session: requests.Session) -> MarketRow:
             response.raise_for_status()
             raw_html = decode_response_content(response)
             text = strip_html_tags(raw_html)
+
             parsed = parse_yahoo_topix_snapshot(text)
+            if parsed is None:
+                parsed = parse_yahoo_topix_history_rows(text)
             if parsed is None:
                 raise ValueError("Yahoo!ファイナンスのTOPIXページから現在値を抽出できませんでした。")
 
@@ -1532,6 +1604,48 @@ def is_allowed_news_source(source_name: str, publisher: str) -> bool:
     return "bloomberg" in normalized or "ブルームバーグ" in normalized
 
 
+def fetch_bloomberg_jp_homepage_items(session: requests.Session, limit: int = 10) -> List[dict]:
+    items: List[dict] = []
+    seen_titles = set()
+
+    for url in BLOOMBERG_JP_FALLBACK_URLS:
+        try:
+            response = session.get(url, timeout=30)
+            response.raise_for_status()
+            raw_html = decode_response_content(response)
+
+            og_url_match = BLOOMBERG_JP_OG_URL_PATTERN.search(raw_html)
+            base_url = og_url_match.group(1) if og_url_match else url
+
+            for match in BLOOMBERG_JP_ARTICLE_PATH_PATTERN.finditer(raw_html):
+                title = normalize_news_title(strip_html_tags(match.group("title")))
+                link = normalize_bloomberg_article_url(urljoin(base_url, match.group("link")))
+
+                if (
+                    not title
+                    or not link
+                    or not is_allowed_news_link(link, "Bloomberg日本語")
+                    or not is_japanese_title(title)
+                    or is_noise_news_title(title, "Bloomberg日本語")
+                    or title in seen_titles
+                ):
+                    continue
+
+                seen_titles.add(title)
+                items.append({
+                    "title": title,
+                    "link": link,
+                    "pub_date": "",
+                    "source": "Bloomberg",
+                })
+                if len(items) >= limit:
+                    return items
+        except Exception:
+            LOGGER.exception("Bloomberg日本語ホーム取得失敗: %s", url)
+
+    return items
+
+
 def fetch_news_items(session: requests.Session, publisher: str, urls: List[str], limit: int = 10) -> List[dict]:
     items: List[dict] = []
     seen_titles = set()
@@ -1549,6 +1663,9 @@ def fetch_news_items(session: requests.Session, publisher: str, urls: List[str],
                 link = (item.findtext("link") or "").strip()
                 pub_date = (item.findtext("pubDate") or "").strip()
                 source_name = (item.findtext("source") or "").strip()
+
+                if publisher == "Bloomberg日本語":
+                    link = normalize_bloomberg_article_url(link)
 
                 if (
                     not title
@@ -1573,6 +1690,11 @@ def fetch_news_items(session: requests.Session, publisher: str, urls: List[str],
         except Exception as exc:
             LOGGER.exception("ニュース取得失敗: %s", url)
             errors.append(f"{url}: {exc}")
+
+    if publisher == "Bloomberg日本語" and not items:
+        fallback_items = fetch_bloomberg_jp_homepage_items(session, limit=limit)
+        if fallback_items:
+            return fallback_items
 
     if items:
         return items
