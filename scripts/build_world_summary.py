@@ -263,50 +263,47 @@ def fetch_topix_from_yahoo_finance(session: requests.Session) -> MarketRow:
         raw_html = decode_response_content(response)
         text = strip_html_tags(raw_html)
 
-        current_text = extract_by_patterns(
-            text,
-            [
-                r"TOPIX\s*998405\.T\s*([0-9,]+(?:\.[0-9]+)?)\s*前日比",
-                r"##\s*TOPIX\s*998405\.T\s*([0-9,]+(?:\.[0-9]+)?)\s*前日比",
-                r"TOPIXの指数情報・推移[\s\S]{0,400}?前日終値",
-            ],
-        )
-        if current_text is None:
-            current_text = extract_by_patterns(
+        current = parse_decimal(
+            extract_by_patterns(
                 text,
-                [r"TOPIX\s*998405\.T\s*([0-9,]+(?:\.[0-9]+)?)"],
+                [
+                    r"##\s*TOPIX\s*998405\.T\s*([0-9,]+(?:\.[0-9]+)?)\s*前日比",
+                    r"TOPIX\s*998405\.T\s*([0-9,]+(?:\.[0-9]+)?)\s*前日比",
+                    r"##\s*TOPIX\s*([0-9,]+(?:\.[0-9]+)?)\s*前日比",
+                ],
             )
-
-        previous_text = extract_by_patterns(
-            text,
-            [
-                r"前日終値\s*([0-9,]+(?:\.[0-9]+)?)",
-            ],
         )
-
-        change_text = extract_by_patterns(
-            text,
-            [
-                r"前日比\s*([+-]?[0-9,]+(?:\.[0-9]+)?)\s*\(",
-                r"前日比\s*([+-−＋]?[0-9,]+(?:\.[0-9]+)?)",
-            ],
+        previous = parse_decimal(
+            extract_by_patterns(
+                text,
+                [
+                    r"前日終値\s*([0-9,]+(?:\.[0-9]+)?)\(",
+                    r"前日終値\s*([0-9,]+(?:\.[0-9]+)?)",
+                ],
+            )
         )
-        change_pct_text = extract_by_patterns(
-            text,
-            [
-                r"前日比\s*[+-−＋]?[0-9,]+(?:\.[0-9]+)?\s*\(([+-]?[0-9.]+)%\)",
-            ],
+        change = parse_decimal(
+            extract_by_patterns(
+                text,
+                [
+                    r"前日比\s*([+\-−＋]?[0-9,]+(?:\.[0-9]+)?)\(",
+                    r"前日比\s*([+\-−＋]?[0-9,]+(?:\.[0-9]+)?)",
+                ],
+            )
         )
-
-        current = parse_decimal(current_text)
-        previous = parse_decimal(previous_text)
-        change = parse_decimal(change_text)
-        change_pct = parse_decimal(change_pct_text)
+        change_pct = parse_decimal(
+            extract_by_patterns(
+                text,
+                [
+                    r"前日比\s*[+\-−＋]?[0-9,]+(?:\.[0-9]+)?\(([+\-−＋]?[0-9.]+)%\)",
+                ],
+            )
+        )
 
         if current is None:
             raise ValueError("Yahoo!ファイナンスのTOPIXページから現在値を抽出できませんでした。")
 
-        if change is None and current is not None and previous is not None:
+        if change is None and previous is not None:
             change = current - previous
 
         if change_pct is None and change is not None and previous not in (None, 0):
@@ -335,7 +332,6 @@ def fetch_topix_from_yahoo_finance(session: requests.Session) -> MarketRow:
             acquired_at=None,
             missing_reason=f"Yahoo!ファイナンスTOPIXページ取得失敗: {exc}",
         )
-
 
 def parse_jpx_reit_from_text(text: str) -> Optional[tuple[float, float]]:
     patterns = [
@@ -395,48 +391,52 @@ def fetch_tse_reit_from_investing(session: requests.Session, prior_errors: Optio
             response.raise_for_status()
             text = strip_html_tags(response.text)
 
-            current_text = extract_by_patterns(
-                text,
-                [
-                    r"東証REIT指数\s*\(TREIT\)\s*東京\s*通貨\s*JPY\s*ウォッチリストに加える\s*([0-9,]+(?:\.[0-9]+)?)",
-                    r"Tokyo Stock Exchange REIT\s*\(TREIT\)\s*Tokyo\s*Currency\s*in\s*JPY\s*Add to Watchlist\s*([0-9,]+(?:\.[0-9]+)?)",
-                ],
+            current = parse_decimal(
+                extract_by_patterns(
+                    text,
+                    [
+                        r"ウォッチリストに加える\s*([0-9,]+(?:\.[0-9]+)?)\s*[+\-−＋]?[0-9,]+(?:\.[0-9]+)?\(",
+                        r"Add to Watchlist\s*([0-9,]+(?:\.[0-9]+)?)\s*[+\-−＋]?[0-9,]+(?:\.[0-9]+)?\(",
+                        r"東証REIT指数\s*\(TREIT\)[\s\S]{0,120}?([0-9,]+(?:\.[0-9]+)?)\s*[+\-−＋][0-9,]+(?:\.[0-9]+)?\(",
+                    ],
+                )
             )
-            change_text = extract_by_patterns(
-                text,
-                [
-                    r"ウォッチリストに加える\s*[0-9,]+(?:\.[0-9]+)?\s*([+-]?[0-9,]+(?:\.[0-9]+)?)\s*\(",
-                    r"Add to Watchlist\s*[0-9,]+(?:\.[0-9]+)?\s*([+-]?[0-9,]+(?:\.[0-9]+)?)\s*\(",
-                ],
+            change = parse_decimal(
+                extract_by_patterns(
+                    text,
+                    [
+                        r"ウォッチリストに加える\s*[0-9,]+(?:\.[0-9]+)?\s*([+\-−＋]?[0-9,]+(?:\.[0-9]+)?)\(",
+                        r"Add to Watchlist\s*[0-9,]+(?:\.[0-9]+)?\s*([+\-−＋]?[0-9,]+(?:\.[0-9]+)?)\(",
+                    ],
+                )
             )
-            previous_text = extract_by_patterns(
-                text,
-                [
-                    r"前日終値\s*([0-9,]+(?:\.[0-9]+)?)",
-                    r"Prev\. Close\s*([0-9,]+(?:\.[0-9]+)?)",
-                ],
+            previous = parse_decimal(
+                extract_by_patterns(
+                    text,
+                    [
+                        r"前日終値\s*([0-9,]+(?:\.[0-9]+)?)",
+                        r"Prev\. Close\s*([0-9,]+(?:\.[0-9]+)?)",
+                    ],
+                )
             )
-            change_pct_text = extract_by_patterns(
-                text,
-                [
-                    r"ウォッチリストに加える\s*[0-9,]+(?:\.[0-9]+)?\s*[+-]?[0-9,]+(?:\.[0-9]+)?\s*\(([+-]?[0-9.]+)%\)",
-                    r"Add to Watchlist\s*[0-9,]+(?:\.[0-9]+)?\s*[+-]?[0-9,]+(?:\.[0-9]+)?\s*\(([+-]?[0-9.]+)%\)",
-                ],
+            change_pct = parse_decimal(
+                extract_by_patterns(
+                    text,
+                    [
+                        r"ウォッチリストに加える\s*[0-9,]+(?:\.[0-9]+)?\s*[+\-−＋]?[0-9,]+(?:\.[0-9]+)?\(([+\-−＋]?[0-9.]+)%\)",
+                        r"Add to Watchlist\s*[0-9,]+(?:\.[0-9]+)?\s*[+\-−＋]?[0-9,]+(?:\.[0-9]+)?\(([+\-−＋]?[0-9.]+)%\)",
+                    ],
+                )
             )
-
-            current = parse_decimal(current_text)
-            change = parse_decimal(change_text)
-            previous = parse_decimal(previous_text)
-            change_pct = parse_decimal(change_pct_text)
 
             if current is None:
                 errors.append(f"Investing.com 東証REIT解析失敗: {url}")
                 continue
 
-            if change is None and current is not None and previous is not None:
+            if change is None and previous is not None:
                 change = current - previous
 
-            if previous is None and current is not None and change is not None:
+            if previous is None and change is not None:
                 previous = current - change
 
             if change_pct is None and change is not None and previous not in (None, 0):
@@ -468,7 +468,6 @@ def fetch_tse_reit_from_investing(session: requests.Session, prior_errors: Optio
         acquired_at=None,
         missing_reason=" / ".join(errors) if errors else "JPXおよびInvesting.comから取得できませんでした。",
     )
-
 
 def normalize_header(value: str) -> str:
     return re.sub(r"\s+", "", value).strip().lower()
@@ -878,60 +877,6 @@ def build_category_sections(results: Dict[str, List[MarketRow]]) -> str:
     return "\n".join(sections)
 
 
-def build_missing_section(results: Dict[str, List[MarketRow]]) -> str:
-    rows = []
-    for category in CATEGORY_ORDER:
-        for row in results.get(category, []):
-            if not row.is_missing and not row.note:
-                continue
-            reason = row.missing_reason or "代替取得"
-            alt = "あり" if row.note else "なし"
-            note = row.note or ""
-            rows.append(
-                f"""
-                <tr>
-                  <td>{html.escape(row.name)}</td>
-                  <td>{html.escape(reason)}</td>
-                  <td>{html.escape(alt)}</td>
-                  <td>{html.escape(note)}</td>
-                </tr>
-                """
-            )
-
-    if not rows:
-        rows.append(
-            """
-            <tr>
-              <td>なし</td>
-              <td>未取得項目はありません。</td>
-              <td>なし</td>
-              <td></td>
-            </tr>
-            """
-        )
-
-    return f"""
-    <section class="summary-section">
-      <h2>未取得項目</h2>
-      <div class="summary-table-wrap">
-        <table class="summary-table">
-          <thead>
-            <tr>
-              <th>項目名</th>
-              <th>未取得理由</th>
-              <th>代替取得</th>
-              <th>補足</th>
-            </tr>
-          </thead>
-          <tbody>
-            {''.join(rows)}
-          </tbody>
-        </table>
-      </div>
-    </section>
-    """
-
-
 def build_news_sections(news_map: Dict[str, List[dict]]) -> str:
     sections = []
     for publisher, items in news_map.items():
@@ -957,27 +902,10 @@ def build_news_sections(news_map: Dict[str, List[dict]]) -> str:
     return "\n".join(sections)
 
 
-def build_source_list(results: Dict[str, List[MarketRow]]) -> str:
-    sources = []
-    seen = set()
-    for category in CATEGORY_ORDER:
-        for row in results.get(category, []):
-            label = row.display_source
-            if label in seen:
-                continue
-            seen.add(label)
-            sources.append(label)
-    for name in ("Reuters日本語", "Bloomberg日本語"):
-        if name not in seen:
-            sources.append(name)
-    return "".join(f"<li>{html.escape(item)}</li>" for item in sources)
-
-
 def build_summary_html(results: Dict[str, List[MarketRow]], news_map: Dict[str, List[dict]], generated_at_jst: datetime, generated_at_ny: datetime) -> str:
     overview_paragraphs = build_overview_paragraphs(results)
     overview_html = "".join(f"<p>{html.escape(text)}</p>" for text in overview_paragraphs)
     sections_html = build_category_sections(results)
-    missing_html = build_missing_section(results)
     news_html = build_news_sections(news_map)
     favicon_links = build_favicon_links()
     head_favicon_block = f"\n{favicon_links}" if favicon_links else ""
@@ -1013,7 +941,6 @@ def build_summary_html(results: Dict[str, List[MarketRow]], news_map: Dict[str, 
     {sections_html}
   </section>
 
-  {missing_html}
 
   {news_html}
 
