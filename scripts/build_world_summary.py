@@ -1839,39 +1839,34 @@ def build_overview_paragraphs(results: Dict[str, List[MarketRow]]) -> List[str]:
 
     paragraphs = []
     paragraphs.append(
-        "足元の相場全体をみると、米国株は "
-        f"NYダウ {format_value(dow)}、S&P500 {format_value(spx)}、NASDAQ総合 {format_value(nasdaq)} "
-        f"の並びで弱含みとなっており、SOX {format_value(sox)} の動きもあわせてみると、"
-        "ハイテク・半導体まで売りが広がっている構図です。"
-        f"一方で VIX は {format_value(vix)} と高めで、株式市場の不安心理がまだ残っていることを示しています。"
+        "前営業日の終値ベースでみると、米国株は方向感の弱さが続きました。"
+        f"ダウは {format_value(dow)}、S&P500 は {format_value(spx)}、NASDAQ総合は {format_value(nasdaq)} で引けており、"
+        f"SOX も {format_value(sox)} まで下げています。"
+        f"VIX は {format_value(vix)} と高水準で、株式市場では不安心理がなお強い状態です。"
     )
     paragraphs.append(
-        "日本株は、日経225 "
-        f"{format_value(nikkei)} と TOPIX {format_value(topix)} を比べると、"
-        "大型株主導なのか、より広い市場全体に売買が波及しているのかを切り分けやすい状態です。"
-        f"J-REITは {format_value(reit)} で、金利の水準や国内不動産関連の見方を補助的に確認する材料になります。"
+        "日本株も軟調でした。"
+        f"日経225 は {format_value(nikkei)}、TOPIX は {format_value(topix)}、J-REIT は {format_value(reit)} で取引を終えています。"
+        "日経平均だけでなく TOPIX も弱いため、一部の値がさ株だけではなく、市場全体に売りが広がった一日とみられます。"
+        "J-REIT の弱さも、国内金利や不動産市況への警戒を意識させる動きです。"
     )
     paragraphs.append(
-        "為替と金利では、ドルインデックス "
-        f"{format_value(dxy)}、USD/JPY {format_value(usd_jpy)}、EUR/USD {format_value(eur_usd)} "
-        "を並べることで、ドル高そのものなのか、円安やユーロ安が主因なのかを整理しやすくなります。"
-        f"加えて、米10年債利回り {format_value(us10)} と日本10年債利回り {format_value(jp10)} を見ると、"
-        "日米金利差が為替をどの程度支えているかを確認できます。"
+        "為替と金利では、ドルの強さと金利の高さが引き続き相場の重しになっています。"
+        f"ドルインデックスは {format_value(dxy)}、USD/JPY は {format_value(usd_jpy)}、EUR/USD は {format_value(eur_usd)} でした。"
+        f"米10年債利回りは {format_value(us10)}、日本10年債利回りは {format_value(jp10)} で、"
+        "日米ともに金利が高止まりしていることが株式には逆風です。"
     )
     paragraphs.append(
-        "商品市況では、金 "
-        f"{format_value(gold)}、WTI原油 {format_value(oil)}、銅 {format_value(copper)} "
-        "を中心に見ると、安全資産、エネルギー、景気敏感という異なる軸を同時に追えます。"
-        "金が強く、原油や銅が弱い局面なら慎重姿勢が強いと読みやすく、逆なら景気期待が支えになっている可能性があります。"
+        "商品市況では、インフレと地政学の警戒がなお残っています。"
+        f"金は {format_value(gold)}、WTI原油は {format_value(oil)}、銅は {format_value(copper)} でした。"
+        "金が高値圏を維持する一方で、原油高が続くなら、景気期待よりもコスト増とインフレ再燃への警戒が前面に出やすい局面です。"
     )
     paragraphs.append(
-        "暗号資産は、BTC/USD "
-        f"{format_value(btc)} と ETH/USD {format_value(eth)} を中心に、"
-        "伝統資産とは別のリスク選好の温度感を測る補助指標として扱っています。"
-        "株式が弱いのに暗号資産が底堅い場合は、投機資金の残存を示すことがあり、逆に同時安ならリスク回避色が強いと解釈しやすいです。"
+        "暗号資産は補助的にみると、伝統資産ほど一方向に崩れてはいません。"
+        f"BTC/USD は {format_value(btc)}、ETH/USD は {format_value(eth)} でした。"
+        "ただし、株式市場の緊張を打ち消すほどの強さが確認できる局面でもなく、全体としては防御色の残る地合いです。"
     )
     return paragraphs
-
 
 def build_category_sections(results: Dict[str, List[MarketRow]]) -> str:
     sections = []
@@ -1961,7 +1956,7 @@ def build_summary_html(results: Dict[str, List[MarketRow]], news_map: Dict[str, 
       <div class="year-nav">
         <a class="year-nav-button" href="../index.html">カレンダーへ戻る</a>
       </div>
-      <div class="year-range-note">取得時点差あり</div>
+      <div class="year-range-note">終値ベースを優先</div>
     </div>
     <h1>世界経済サマリー</h1>
     <p class="summary-meta">生成時刻 JST: {html.escape(generated_at_jst.strftime("%Y-%m-%d %H:%M:%S"))} / New York: {html.escape(generated_at_ny.strftime("%Y-%m-%d %H:%M:%S"))}</p>
