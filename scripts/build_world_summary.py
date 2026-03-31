@@ -131,6 +131,7 @@ JPX_REIT_QUOTE_URLS = [
     "https://quote.jpx.co.jp/jpxhp/main/index.aspx?F=real_index&mode=D&qcode=155",
     "https://quote.jpx.co.jp/jpxhp/main/index.aspx?F=e_real_index&qcode=155",
 ]
+JPX_INDEX_JSON_URL = "https://www.jpx.co.jp/market/indices/indices_stock_price3.txt"
 INVESTING_TOPIX_URLS = [
     "https://www.investing.com/indices/topix",
     "https://jp.investing.com/indices/topix",
@@ -148,9 +149,8 @@ INVESTING_REIT_HISTORICAL_URLS = [
     "https://www.investing.com/indices/topix-reit-market-historical-data",
 ]
 MOF_JGB_CSV_URLS = [
-    "https://www.mof.go.jp/english/policy/jgbs/reference/interest_rate/historical/jgbcme_all.csv",
-    "https://www.mof.go.jp/jgbs/reference/interest_rate/historical/jgbcme_all.csv",
     "https://www.mof.go.jp/jgbs/reference/interest_rate/jgbcm.csv",
+    "https://www.mof.go.jp/english/policy/jgbs/reference/interest_rate/historical/jgbcme_all.csv",
 ]
 INVESTING_JGB_URLS = {
     "日本国債2年利回り": "https://jp.investing.com/rates-bonds/japan-2-year-bond-yield",
@@ -178,9 +178,9 @@ YF_ITEMS = {
     ],
     "米国債": [
         {"name": "米国債2年利回り", "symbol": "US2YT=X", "source": "Investing.com", "suffix": "%", "custom_method": "investing_us_bond_2y"},
-        {"name": "米国債5年利回り", "symbol": "^FVX", "source": "Yahoo Finance", "is_yield10x": True, "suffix": "%"},
-        {"name": "米国債10年利回り", "symbol": "^TNX", "source": "Yahoo Finance", "is_yield10x": True, "suffix": "%"},
-        {"name": "米国債30年利回り", "symbol": "^TYX", "source": "Yahoo Finance", "is_yield10x": True, "suffix": "%"},
+        {"name": "米国債5年利回り", "symbol": "^FVX", "source": "Yahoo Finance", "suffix": "%"},
+        {"name": "米国債10年利回り", "symbol": "^TNX", "source": "Yahoo Finance", "suffix": "%"},
+        {"name": "米国債30年利回り", "symbol": "^TYX", "source": "Yahoo Finance", "suffix": "%"},
     ],
     "商品": [
         {"name": "金", "symbol": "GC=F", "source": "Yahoo Finance"},
@@ -1068,13 +1068,23 @@ def fetch_investing_bond_row(
 
 
 def fetch_us_2y_from_investing(session: requests.Session) -> MarketRow:
-    return fetch_investing_bond_row(
+    row = fetch_investing_bond_row(
         session=session,
         category="米国債",
         name="米国債2年利回り",
         url=INVESTING_US_BOND_URLS["米国債2年利回り"],
         jp_mode=False,
     )
+    if not row.is_missing:
+        return row
+
+    # Investing.com失敗時のYahoo Financeフォールバック
+    yf_row = fetch_yahoo_row("米国債", {"name": "米国債2年利回り", "symbol": "2YY=F", "source": "Yahoo Finance", "suffix": "%"})
+    if not yf_row.is_missing:
+        yf_row.note = "Investing.com失敗時の代替取得"
+        return yf_row
+
+    return row
 
 
 def fetch_topix_from_investing_historical(session: requests.Session) -> MarketRow:
@@ -1405,16 +1415,66 @@ def fetch_tse_reit_from_investing(session: requests.Session, prior_errors: Optio
     )
 
 
+def fetch_reit_from_jpx_json(session: requests.Session) -> MarketRow:
+    try:
+        response = session.get(JPX_INDEX_JSON_URL, timeout=30)
+        response.raise_for_status()
+        data = response.json()
+        reit = data.get("MainStockIndex", {}).get("TseReitIndex")
+        if reit is None:
+            reit = data.get("TseMarketType", {}).get("TseReitIndex")
+        if reit is None:
+            raise ValueError("TseReitIndex が見つかりません。")
+
+        current = parse_decimal(reit.get("currentPrice"))
+        change = parse_decimal(reit.get("previousDayComparison"))
+        change_pct = parse_decimal(reit.get("previousDayRatio"))
+        if current is None:
+            raise ValueError("J-REIT現在値を取得できませんでした。")
+
+        previous, change, change_pct = fill_derived_fields(current, None, change, change_pct)
+        return MarketRow(
+            category="株式",
+            name="J-REIT",
+            value=current,
+            previous=previous,
+            change=change,
+            change_pct=change_pct,
+            source="JPX",
+            acquired_at=None,
+            note="JPX JSON APIから取得",
+        )
+    except Exception as exc:
+        LOGGER.exception("JPX JSON REIT取得失敗")
+        return MarketRow(
+            category="株式",
+            name="J-REIT",
+            value=None,
+            previous=None,
+            change=None,
+            change_pct=None,
+            source="JPX",
+            acquired_at=None,
+            note="代替取得",
+            missing_reason=f"JPX JSON取得失敗: {exc}",
+        )
+
+
 def fetch_tse_reit_from_jpx(session: requests.Session) -> MarketRow:
     investing_row = fetch_tse_reit_from_investing(session)
     if not investing_row.is_missing:
         if investing_row.previous is None or investing_row.change is None or investing_row.change_pct is None:
-            investing_row = supplement_market_row(investing_row, fetch_reit_from_jpx_realvalues(session), "一部をJPXリアルタイム指数一覧で補完")
-        if investing_row.previous is None or investing_row.change is None or investing_row.change_pct is None:
-            investing_row = supplement_market_row(investing_row, fetch_reit_from_jpx_quote(session), "一部をJPX個別指数ページで補完")
+            investing_row = supplement_market_row(investing_row, fetch_reit_from_jpx_json(session), "一部をJPX JSON APIで補完")
         return investing_row
 
     errors: List[str] = []
+
+    json_row = fetch_reit_from_jpx_json(session)
+    if not json_row.is_missing:
+        return json_row
+    if json_row.missing_reason:
+        errors.append(json_row.missing_reason)
+
     realvalues_row = fetch_reit_from_jpx_realvalues(session)
     if not realvalues_row.is_missing:
         realvalues_row.note = "Investing.com失敗時の代替取得" if not realvalues_row.note else f"{realvalues_row.note} / Investing.com失敗時の代替取得"
@@ -1459,15 +1519,28 @@ def parse_mof_jgb_rows(session: requests.Session) -> Dict[str, MarketRow]:
             if not rows:
                 raise ValueError("CSVが空です。")
 
-            header_row = rows[0]
-            data_rows = rows[1:]
+            # タイトル行をスキップし、実際のヘッダー行を検出
+            header_row = None
+            header_row_idx = None
+            date_aliases = ["基準日", "Date"]
+            for ri, row in enumerate(rows):
+                for ci, cell in enumerate(row):
+                    if normalize_header(cell) in {normalize_header(a) for a in date_aliases}:
+                        header_row = row
+                        header_row_idx = ri
+                        break
+                if header_row is not None:
+                    break
+            if header_row is None:
+                raise ValueError(f"ヘッダー行を検出できませんでした。 rows[0]={rows[0]}")
+            data_rows = rows[header_row_idx + 1:]
             header_map = {normalize_header(cell): idx for idx, cell in enumerate(header_row)}
 
             date_idx = find_header_index(header_map, ["基準日", "Date"])
-            idx_2 = find_header_index(header_map, ["2年", "2Year"])
-            idx_5 = find_header_index(header_map, ["5年", "5Year"])
-            idx_10 = find_header_index(header_map, ["10年", "10Year"])
-            idx_30 = find_header_index(header_map, ["30年", "30Year"])
+            idx_2 = find_header_index(header_map, ["2年", "2Year", "2Y"])
+            idx_5 = find_header_index(header_map, ["5年", "5Year", "5Y"])
+            idx_10 = find_header_index(header_map, ["10年", "10Year", "10Y"])
+            idx_30 = find_header_index(header_map, ["30年", "30Year", "30Y"])
 
             if date_idx is None or idx_2 is None or idx_5 is None or idx_10 is None or idx_30 is None:
                 raise ValueError(f"必要列を検出できませんでした。 header={header_row}")
