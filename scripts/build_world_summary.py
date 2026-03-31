@@ -158,17 +158,8 @@ INVESTING_JGB_URLS = {
     "日本国債10年利回り": "https://www.investing.com/rates-bonds/japan-10-year-bond-yield",
     "日本国債30年利回り": "https://www.investing.com/rates-bonds/japan-30-year-bond-yield",
 }
-INVESTING_JGB_HISTORICAL_URLS = {
-    "日本国債2年利回り": "https://jp.investing.com/rates-bonds/japan-2-year-bond-yield-historical-data",
-    "日本国債5年利回り": "https://jp.investing.com/rates-bonds/japan-5-year-bond-yield-historical-data",
-    "日本国債10年利回り": "https://jp.investing.com/rates-bonds/japan-10-year-bond-yield-historical-data",
-    "日本国債30年利回り": "https://jp.investing.com/rates-bonds/japan-30-year-bond-yield-historical-data",
-}
 INVESTING_US_BOND_URLS = {
     "米国債2年利回り": "https://www.investing.com/rates-bonds/u.s.-2-year-bond-yield",
-}
-INVESTING_US_BOND_HISTORICAL_URLS = {
-    "米国債2年利回り": "https://jp.investing.com/rates-bonds/u.s.-2-year-bond-yield-historical-data",
 }
 
 YF_ITEMS = {
@@ -255,10 +246,22 @@ YAHOO_FX_CURRENCY_NAME_CODE_PAIRS = [
 ]
 YAHOO_FX_PRIORITY_PAIRS = [
     "USD/JPY",
-    "EUR/USD",
-    "EUR/JPY",
-    "GBP/JPY",
     "AUD/JPY",
+    "GBP/JPY",
+    "EUR/JPY",
+    "NZD/JPY",
+    "ZAR/JPY",
+    "CAD/JPY",
+    "CHF/JPY",
+    "EUR/USD",
+    "GBP/USD",
+    "AUD/USD",
+    "NZD/USD",
+    "EUR/AUD",
+    "EUR/GBP",
+    "USD/CHF",
+    "GBP/CHF",
+    "EUR/CHF",
 ]
 
 
@@ -380,9 +383,8 @@ def fetch_yahoo_row(category: str, spec: dict) -> MarketRow:
         previous = float(hist["Close"].iloc[-2]) if len(hist) >= 2 else None
 
         if is_yield10x:
-            if current >= 20.0:
-                current /= 10.0
-            if previous is not None and previous >= 20.0:
+            current /= 10.0
+            if previous is not None:
                 previous /= 10.0
 
         change = None if previous is None else current - previous
@@ -618,10 +620,14 @@ def fetch_forex_rows(session: requests.Session) -> List[MarketRow]:
     for spec in YF_ITEMS["為替"]:
         rows.append(fetch_yahoo_row("為替", spec))
 
-    top_pair_specs = [spec for spec in build_fallback_forex_specs() if spec["name"] in YAHOO_FX_PRIORITY_PAIRS]
-    top_pair_specs.sort(key=lambda spec: YAHOO_FX_PRIORITY_PAIRS.index(spec["name"]))
+    currency_codes = extract_supported_yahoo_fx_currency_codes(session)
+    pair_specs = build_all_yahoo_fx_pair_specs(currency_codes)
+    pair_rows = [row for row in fetch_yahoo_rows_bulk("為替", pair_specs, allow_individual_fallback=False) if not row.is_missing]
 
-    pair_rows = [row for row in fetch_yahoo_rows_bulk("為替", top_pair_specs, allow_individual_fallback=True) if not row.is_missing]
+    if not pair_rows:
+        LOGGER.warning("Yahoo!ファイナンスの為替ペア一括取得結果が空のため主要ペアへフォールバックします。")
+        pair_rows = [row for row in fetch_yahoo_rows_bulk("為替", build_fallback_forex_specs(), allow_individual_fallback=True) if not row.is_missing]
+
     rows.extend(pair_rows)
     return rows
 
@@ -952,7 +958,7 @@ def parse_investing_historical_latest_rows(
         rf"\s+({number_pattern})"
         rf"\s+({number_pattern})"
         rf"(?:\s+({volume_pattern}))?"
-        rf"\s+([+\-−＋]?[0-9.]+)%"
+        rf"\s*([+\-−＋]?[0-9.]+)%"
     )
 
     matches = list(re.finditer(row_pattern, target_text, re.IGNORECASE))
@@ -969,51 +975,6 @@ def parse_investing_historical_latest_rows(
     change = None if previous is None else current - previous
     previous, change, change_pct = fill_derived_fields(current, previous, change, change_pct)
     return current, previous, change, change_pct, acquired_at
-
-
-def fetch_investing_historical_row(
-    session: requests.Session,
-    category: str,
-    name: str,
-    url: str,
-    jp_mode: bool = False,
-) -> MarketRow:
-    try:
-        response = session.get(url, timeout=30)
-        response.raise_for_status()
-        text = strip_html_tags(decode_response_content(response))
-        parsed = parse_investing_historical_latest_rows(text=text, section_markers=[])
-        if parsed is None:
-            raise ValueError("Investing.com過去データページから終値を抽出できませんでした。")
-
-        current, previous, change, change_pct, acquired_at = parsed
-        return MarketRow(
-            category=category,
-            name=name,
-            value=current,
-            previous=previous,
-            change=change,
-            change_pct=change_pct,
-            source="Investing.com",
-            acquired_at=acquired_at,
-            suffix="%" if "利回り" in name else "",
-            note="過去データページから取得" if not jp_mode else "代替取得 / 過去データページから取得",
-        )
-    except Exception as exc:
-        LOGGER.exception("Investing historical取得失敗: %s", name)
-        return MarketRow(
-            category=category,
-            name=name,
-            value=None,
-            previous=None,
-            change=None,
-            change_pct=None,
-            source="Investing.com",
-            acquired_at=None,
-            suffix="%" if "利回り" in name else "",
-            note="代替取得" if jp_mode else "",
-            missing_reason=f"Investing過去データ取得失敗: {exc}",
-        )
 
 
 def fetch_investing_bond_row(
@@ -1107,26 +1068,13 @@ def fetch_investing_bond_row(
 
 
 def fetch_us_2y_from_investing(session: requests.Session) -> MarketRow:
-    historical_row = fetch_investing_historical_row(
-        session=session,
-        category="米国債",
-        name="米国債2年利回り",
-        url=INVESTING_US_BOND_HISTORICAL_URLS["米国債2年利回り"],
-        jp_mode=False,
-    )
-    if not historical_row.is_missing:
-        return historical_row
-
-    fallback_row = fetch_investing_bond_row(
+    return fetch_investing_bond_row(
         session=session,
         category="米国債",
         name="米国債2年利回り",
         url=INVESTING_US_BOND_URLS["米国債2年利回り"],
         jp_mode=False,
     )
-    if fallback_row.is_missing and historical_row.missing_reason:
-        fallback_row.missing_reason = f"{historical_row.missing_reason} / {fallback_row.missing_reason}" if fallback_row.missing_reason else historical_row.missing_reason
-    return fallback_row
 
 
 def fetch_topix_from_investing_historical(session: requests.Session) -> MarketRow:
@@ -1308,30 +1256,8 @@ def fetch_reit_from_jpx_quote(session: requests.Session) -> MarketRow:
     )
 
 
-def fetch_topix_from_yahoo_history_api() -> MarketRow:
-    row = fetch_yahoo_row(
-        "株式",
-        {"name": "TOPIX", "symbol": "998405.T", "source": "Yahoo Finance"},
-    )
-    if not row.is_missing:
-        row.note = "日足終値から取得"
-    return row
-
-
 def fetch_topix_from_yahoo_finance(session: requests.Session) -> MarketRow:
     errors: List[str] = []
-
-    history_row = fetch_topix_from_yahoo_history_api()
-    if not history_row.is_missing:
-        if history_row.previous is None or history_row.change is None or history_row.change_pct is None:
-            history_row = supplement_market_row(history_row, fetch_topix_from_investing_historical(session), "一部をInvesting.com過去データで補完")
-        if history_row.previous is None or history_row.change is None or history_row.change_pct is None:
-            history_row = supplement_market_row(history_row, fetch_topix_from_investing(session), "一部をInvesting.com概要ページで補完")
-        return history_row
-
-    if history_row.missing_reason:
-        errors.append(history_row.missing_reason)
-
     for url in YAHOO_TOPIX_URLS:
         try:
             response = session.get(url, timeout=30)
@@ -1646,24 +1572,13 @@ def fetch_jgb_rows(session: requests.Session) -> List[MarketRow]:
             rows.append(row)
             continue
 
-        historical_fallback = fetch_investing_historical_row(
-            session=session,
-            category="日本国債",
-            name=name,
-            url=INVESTING_JGB_HISTORICAL_URLS[name],
-            jp_mode=True,
-        )
-        if not historical_fallback.is_missing:
-            rows.append(historical_fallback)
-            continue
-
-        summary_fallback = fetch_investing_jgb_row(session, name, INVESTING_JGB_URLS[name])
-        if summary_fallback.is_missing:
-            reasons = [reason for reason in [row.missing_reason, historical_fallback.missing_reason, summary_fallback.missing_reason] if reason]
-            row.missing_reason = " / ".join(reasons)
+        fallback = fetch_investing_jgb_row(session, name, INVESTING_JGB_URLS[name])
+        if fallback.is_missing:
+            if fallback.missing_reason:
+                row.missing_reason = f"{row.missing_reason} / {fallback.missing_reason}"
             rows.append(row)
         else:
-            rows.append(summary_fallback)
+            rows.append(fallback)
 
     return rows
 
@@ -1937,7 +1852,7 @@ def build_overview_paragraphs(results: Dict[str, List[MarketRow]]) -> List[str]:
 
     paragraphs = []
     paragraphs.append(
-        "直近の日足終値ベースでみると、米国株は "
+        "足元の相場全体をみると、米国株は "
         f"NYダウ {format_value(dow)}、S&P500 {format_value(spx)}、NASDAQ総合 {format_value(nasdaq)} "
         f"の並びで弱含みとなっており、SOX {format_value(sox)} の動きもあわせてみると、"
         "ハイテク・半導体まで売りが広がっている構図です。"
@@ -2059,7 +1974,7 @@ def build_summary_html(results: Dict[str, List[MarketRow]], news_map: Dict[str, 
       <div class="year-nav">
         <a class="year-nav-button" href="../index.html">カレンダーへ戻る</a>
       </div>
-      <div class="year-range-note">終値ベースを優先</div>
+      <div class="year-range-note">取得時点差あり</div>
     </div>
     <h1>世界経済サマリー</h1>
     <p class="summary-meta">生成時刻 JST: {html.escape(generated_at_jst.strftime("%Y-%m-%d %H:%M:%S"))} / New York: {html.escape(generated_at_ny.strftime("%Y-%m-%d %H:%M:%S"))}</p>
