@@ -255,22 +255,10 @@ YAHOO_FX_CURRENCY_NAME_CODE_PAIRS = [
 ]
 YAHOO_FX_PRIORITY_PAIRS = [
     "USD/JPY",
-    "AUD/JPY",
-    "GBP/JPY",
-    "EUR/JPY",
-    "NZD/JPY",
-    "ZAR/JPY",
-    "CAD/JPY",
-    "CHF/JPY",
     "EUR/USD",
-    "GBP/USD",
-    "AUD/USD",
-    "NZD/USD",
-    "EUR/AUD",
-    "EUR/GBP",
-    "USD/CHF",
-    "GBP/CHF",
-    "EUR/CHF",
+    "EUR/JPY",
+    "GBP/JPY",
+    "AUD/JPY",
 ]
 
 
@@ -630,14 +618,10 @@ def fetch_forex_rows(session: requests.Session) -> List[MarketRow]:
     for spec in YF_ITEMS["為替"]:
         rows.append(fetch_yahoo_row("為替", spec))
 
-    currency_codes = extract_supported_yahoo_fx_currency_codes(session)
-    pair_specs = build_all_yahoo_fx_pair_specs(currency_codes)
-    pair_rows = [row for row in fetch_yahoo_rows_bulk("為替", pair_specs, allow_individual_fallback=False) if not row.is_missing]
+    top_pair_specs = [spec for spec in build_fallback_forex_specs() if spec["name"] in YAHOO_FX_PRIORITY_PAIRS]
+    top_pair_specs.sort(key=lambda spec: YAHOO_FX_PRIORITY_PAIRS.index(spec["name"]))
 
-    if not pair_rows:
-        LOGGER.warning("Yahoo!ファイナンスの為替ペア一括取得結果が空のため主要ペアへフォールバックします。")
-        pair_rows = [row for row in fetch_yahoo_rows_bulk("為替", build_fallback_forex_specs(), allow_individual_fallback=True) if not row.is_missing]
-
+    pair_rows = [row for row in fetch_yahoo_rows_bulk("為替", top_pair_specs, allow_individual_fallback=True) if not row.is_missing]
     rows.extend(pair_rows)
     return rows
 
@@ -952,18 +936,31 @@ def parse_investing_historical_latest_rows(
             target_text = text[position:]
             break
 
-    matches = list(
-        re.finditer(
-            r"(\d{4}年\d{1,2}月\d{1,2}日)\s+([0-9,]+(?:\.[0-9]+)?)\s+[0-9,]+(?:\.[0-9]+)?\s+[0-9,]+(?:\.[0-9]+)?\s+[0-9,]+(?:\.[0-9]+)?\s*([+\-−＋]?[0-9.]+)%",
-            target_text,
-            re.IGNORECASE,
-        )
+    date_patterns = [
+        r"\d{4}年\d{1,2}月\d{1,2}日",
+        r"\d{4}/\d{1,2}/\d{1,2}",
+        r"[A-Z][a-z]{2}\s+\d{1,2},\s+\d{4}",
+    ]
+    date_pattern = "(?:" + "|".join(date_patterns) + ")"
+    number_pattern = r"[+\-−＋]?[0-9,]+(?:\.[0-9]+)?"
+    volume_pattern = r"(?:[0-9.,]+[KMBT]?|-)"
+
+    row_pattern = (
+        rf"({date_pattern})"
+        rf"\s+({number_pattern})"
+        rf"\s+({number_pattern})"
+        rf"\s+({number_pattern})"
+        rf"\s+({number_pattern})"
+        rf"(?:\s+({volume_pattern}))?"
+        rf"\s+([+\-−＋]?[0-9.]+)%"
     )
+
+    matches = list(re.finditer(row_pattern, target_text, re.IGNORECASE))
     if not matches:
         return None
 
     current = parse_decimal(matches[0].group(2))
-    change_pct = parse_decimal(matches[0].group(3))
+    change_pct = parse_decimal(matches[0].group(7))
     previous = parse_decimal(matches[1].group(2)) if len(matches) >= 2 else None
     acquired_at = matches[0].group(1)
     if current is None:
