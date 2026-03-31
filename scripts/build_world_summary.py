@@ -1219,8 +1219,53 @@ def fetch_topix_from_jpx_quote(session: requests.Session) -> MarketRow:
         source="JPX",
         acquired_at=None,
         note="代替取得",
-        missing_reason=" / ".join(errors) if errors else "JPX から TOPIX を取得できませんでした。",
+        missing_reason=" / ".join(errors) if errors else "JPX個別指数ページから TOPIX を取得できませんでした。",
     )
+
+
+def fetch_topix_from_jpx_json(session: requests.Session) -> MarketRow:
+    try:
+        response = session.get(JPX_INDEX_JSON_URL, timeout=30)
+        response.raise_for_status()
+        data = response.json()
+        topix = data.get("MainStockIndex", {}).get("Topix")
+        if topix is None:
+            topix = data.get("Topix", {}).get("Topix")
+        if topix is None:
+            raise ValueError("Topix が見つかりません。")
+
+        current = parse_decimal(topix.get("currentPrice"))
+        change = parse_decimal(topix.get("previousDayComparison"))
+        change_pct = parse_decimal(topix.get("previousDayRatio"))
+        if current is None:
+            raise ValueError("TOPIX現在値を取得できませんでした。")
+
+        previous, change, change_pct = fill_derived_fields(current, None, change, change_pct)
+        return MarketRow(
+            category="株式",
+            name="TOPIX",
+            value=current,
+            previous=previous,
+            change=change,
+            change_pct=change_pct,
+            source="JPX",
+            acquired_at=None,
+            note="JPX JSON APIから取得",
+        )
+    except Exception as exc:
+        LOGGER.exception("JPX JSON TOPIX取得失敗")
+        return MarketRow(
+            category="株式",
+            name="TOPIX",
+            value=None,
+            previous=None,
+            change=None,
+            change_pct=None,
+            source="JPX",
+            acquired_at=None,
+            note="代替取得",
+            missing_reason=f"JPX JSON取得失敗: {exc}",
+        )
 
 
 def fetch_reit_from_jpx_quote(session: requests.Session) -> MarketRow:
@@ -1309,6 +1354,11 @@ def fetch_topix_from_yahoo_finance(session: requests.Session) -> MarketRow:
         except Exception as exc:
             LOGGER.exception("TOPIX取得失敗: %s", url)
             errors.append(f"{url}: {exc}")
+
+    fallback = fetch_topix_from_jpx_json(session)
+    if not fallback.is_missing:
+        fallback.note = "Yahoo!ファイナンス失敗時のJPX JSON APIから代替取得"
+        return fallback
 
     fallback = fetch_topix_from_investing_historical(session)
     if not fallback.is_missing:
