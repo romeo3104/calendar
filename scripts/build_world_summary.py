@@ -246,22 +246,18 @@ YAHOO_FX_CURRENCY_NAME_CODE_PAIRS = [
 ]
 YAHOO_FX_PRIORITY_PAIRS = [
     "USD/JPY",
-    "AUD/JPY",
-    "GBP/JPY",
-    "EUR/JPY",
-    "NZD/JPY",
-    "ZAR/JPY",
-    "CAD/JPY",
-    "CHF/JPY",
     "EUR/USD",
-    "GBP/USD",
-    "AUD/USD",
-    "NZD/USD",
-    "EUR/AUD",
-    "EUR/GBP",
-    "USD/CHF",
-    "GBP/CHF",
-    "EUR/CHF",
+    "EUR/JPY",
+    "GBP/JPY",
+    "AUD/JPY",
+]
+
+TOP_FOREX_PAIR_SPECS = [
+    {"name": "USD/JPY", "symbol": "USDJPY=X", "source": "Yahoo!ファイナンス"},
+    {"name": "EUR/USD", "symbol": "EURUSD=X", "source": "Yahoo!ファイナンス"},
+    {"name": "EUR/JPY", "symbol": "EURJPY=X", "source": "Yahoo!ファイナンス"},
+    {"name": "GBP/JPY", "symbol": "GBPJPY=X", "source": "Yahoo!ファイナンス"},
+    {"name": "AUD/JPY", "symbol": "AUDJPY=X", "source": "Yahoo!ファイナンス"},
 ]
 
 
@@ -364,6 +360,16 @@ def extract_by_patterns(text: str, patterns: List[str]) -> Optional[str]:
     return None
 
 
+def normalize_yahoo_yield_value(value: Optional[float], is_yield10x: bool) -> Optional[float]:
+    if value is None:
+        return None
+
+    if not is_yield10x:
+        return value
+
+    return value / 10.0 if abs(value) >= 20 else value
+
+
 def fetch_yahoo_row(category: str, spec: dict) -> MarketRow:
     name = spec["name"]
     symbol = spec["symbol"]
@@ -379,13 +385,8 @@ def fetch_yahoo_row(category: str, spec: dict) -> MarketRow:
         if hist.empty:
             raise ValueError("価格履歴が取得できませんでした。")
 
-        current = float(hist["Close"].iloc[-1])
-        previous = float(hist["Close"].iloc[-2]) if len(hist) >= 2 else None
-
-        if is_yield10x:
-            current /= 10.0
-            if previous is not None:
-                previous /= 10.0
+        current = normalize_yahoo_yield_value(float(hist["Close"].iloc[-1]), is_yield10x)
+        previous = normalize_yahoo_yield_value(float(hist["Close"].iloc[-2]), is_yield10x) if len(hist) >= 2 else None
 
         change = None if previous is None else current - previous
         change_pct = None if previous in (None, 0) else (change / previous) * 100
@@ -620,14 +621,7 @@ def fetch_forex_rows(session: requests.Session) -> List[MarketRow]:
     for spec in YF_ITEMS["為替"]:
         rows.append(fetch_yahoo_row("為替", spec))
 
-    currency_codes = extract_supported_yahoo_fx_currency_codes(session)
-    pair_specs = build_all_yahoo_fx_pair_specs(currency_codes)
-    pair_rows = [row for row in fetch_yahoo_rows_bulk("為替", pair_specs, allow_individual_fallback=False) if not row.is_missing]
-
-    if not pair_rows:
-        LOGGER.warning("Yahoo!ファイナンスの為替ペア一括取得結果が空のため主要ペアへフォールバックします。")
-        pair_rows = [row for row in fetch_yahoo_rows_bulk("為替", build_fallback_forex_specs(), allow_individual_fallback=True) if not row.is_missing]
-
+    pair_rows = fetch_yahoo_rows_bulk("為替", TOP_FOREX_PAIR_SPECS, allow_individual_fallback=True)
     rows.extend(pair_rows)
     return rows
 
@@ -1839,7 +1833,7 @@ def build_overview_paragraphs(results: Dict[str, List[MarketRow]]) -> List[str]:
 
     paragraphs = []
     paragraphs.append(
-        "前営業日の終値ベースでみると、米国株は方向感の弱さが続きました。"
+        "直近の日足終値ベースで整理すると、米国株は方向感の弱さが続きました。"
         f"ダウは {format_value(dow)}、S&P500 は {format_value(spx)}、NASDAQ総合は {format_value(nasdaq)} で引けており、"
         f"SOX も {format_value(sox)} まで下げています。"
         f"VIX は {format_value(vix)} と高水準で、株式市場では不安心理がなお強い状態です。"
