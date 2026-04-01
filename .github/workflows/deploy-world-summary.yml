@@ -14,13 +14,15 @@ env:
 
 permissions:
   contents: read
+  pages: write
+  id-token: write
 
 concurrency:
-  group: world-summary
+  group: pages
   cancel-in-progress: true
 
 jobs:
-  build-world-summary:
+  build:
     runs-on: ubuntu-latest
 
     steps:
@@ -37,6 +39,12 @@ jobs:
           python -m pip install --upgrade pip
           pip install yfinance requests
 
+      - name: カレンダー生成
+        env:
+          TZ: Asia/Tokyo
+        run: |
+          python scripts/build_calendar.py
+
       - name: 世界経済サマリー生成（push / 手動）
         if: github.event_name != 'schedule'
         env:
@@ -50,3 +58,23 @@ jobs:
           TZ: Asia/Tokyo
         run: |
           python scripts/build_world_summary.py
+
+      - name: Pages 設定
+        uses: actions/configure-pages@v5
+
+      - name: 生成物アップロード
+        uses: actions/upload-pages-artifact@v4
+        with:
+          path: ./dist
+
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+
+    steps:
+      - name: Pages へデプロイ
+        id: deployment
+        uses: actions/deploy-pages@v4
