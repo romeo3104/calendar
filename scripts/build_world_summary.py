@@ -1691,17 +1691,28 @@ def fetch_jgb_rows(session: requests.Session) -> List[MarketRow]:
 
     for name in ("日本国債2年利回り", "日本国債5年利回り", "日本国債10年利回り", "日本国債30年利回り"):
         row = primary[name]
-        if not row.is_missing:
-            rows.append(row)
-            continue
-
-        fallback = fetch_investing_jgb_row(session, name, INVESTING_JGB_URLS[name])
-        if fallback.is_missing:
-            if fallback.missing_reason:
-                row.missing_reason = f"{row.missing_reason} / {fallback.missing_reason}"
+        if row.is_missing:
+            # 値自体が取得できなかった場合、Investing.comで完全にフォールバック
+            fallback = fetch_investing_jgb_row(session, name, INVESTING_JGB_URLS[name])
+            if fallback.is_missing:
+                if fallback.missing_reason:
+                    row.missing_reason = f"{row.missing_reason} / {fallback.missing_reason}"
+                rows.append(row)
+            else:
+                rows.append(fallback)
+        elif row.change is None:
+            # 値はあるが前日比が不明な場合、Investing.comから補完
+            try:
+                fallback = fetch_investing_jgb_row(session, name, INVESTING_JGB_URLS[name])
+                if not fallback.is_missing and fallback.change is not None:
+                    row.previous = fallback.previous
+                    row.change = fallback.change
+                    row.change_pct = fallback.change_pct
+            except Exception:
+                LOGGER.debug("Investing.com補完失敗: %s", name)
             rows.append(row)
         else:
-            rows.append(fallback)
+            rows.append(row)
 
     return rows
 
