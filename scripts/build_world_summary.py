@@ -2017,37 +2017,55 @@ def build_overview_paragraphs(results: Dict[str, List[MarketRow]]) -> List[str]:
     eth = pick_row(results, "ETH/USD")
 
     paragraphs = []
+
+    # 変動方向を判定するヘルパー
+    def direction(row):
+        if row is None or row.change is None:
+            return "横ばい"
+        if row.change > 0:
+            return "上昇"
+        if row.change < 0:
+            return "下落"
+        return "横ばい"
+
+    def pct_str(row):
+        if row is None or row.change_pct is None:
+            return ""
+        sign = "+" if row.change_pct >= 0 else ""
+        return f"（前日比{sign}{row.change_pct:.2f}%）"
+
+    us_dir = direction(spx)
     paragraphs.append(
-        "足元の相場全体をみると、米国株は "
-        f"NYダウ {format_value(dow)}、S&P500 {format_value(spx)}、NASDAQ総合 {format_value(nasdaq)} "
-        f"の並びで弱含みとなっており、SOX {format_value(sox)} の動きもあわせてみると、"
-        "ハイテク・半導体まで売りが広がっている構図です。"
-        f"一方で VIX は {format_value(vix)} と高めで、株式市場の不安心理がまだ残っていることを示しています。"
+        f"米国株は{us_dir}。"
+        f"NYダウ {format_value(dow)}{pct_str(dow)}、S&P500 {format_value(spx)}{pct_str(spx)}、"
+        f"NASDAQ総合 {format_value(nasdaq)}{pct_str(nasdaq)}。"
+        f"SOX（半導体）は {format_value(sox)}{pct_str(sox)}で、半導体セクターにも売りが波及した。"
+        f"VIX は {format_value(vix)} と高水準にあり、警戒感が続いている。"
     )
+    jp_dir = direction(nikkei)
     paragraphs.append(
-        "日本株は、日経225 "
-        f"{format_value(nikkei)} と TOPIX {format_value(topix)} を比べると、"
-        "大型株主導なのか、より広い市場全体に売買が波及しているのかを切り分けやすい状態です。"
-        f"J-REITは {format_value(reit)} で、金利の水準や国内不動産関連の見方を補助的に確認する材料になります。"
+        f"日本株も{jp_dir}。"
+        f"日経225は {format_value(nikkei)}{pct_str(nikkei)}、TOPIX は {format_value(topix)}{pct_str(topix)}。"
+        f"J-REIT は {format_value(reit)}{pct_str(reit)}で推移した。"
     )
+    fx_dir = direction(usd_jpy)
     paragraphs.append(
-        "為替と金利では、ドルインデックス "
-        f"{format_value(dxy)}、USD/JPY {format_value(usd_jpy)}、EUR/USD {format_value(eur_usd)} "
-        "を並べることで、ドル高そのものなのか、円安やユーロ安が主因なのかを整理しやすくなります。"
-        f"加えて、米10年債利回り {format_value(us10)} と日本10年債利回り {format_value(jp10)} を見ると、"
-        "日米金利差が為替をどの程度支えているかを確認できます。"
+        f"為替市場ではドル円が{fx_dir}し {format_value(usd_jpy)}{pct_str(usd_jpy)}。"
+        f"ドルインデックスは {format_value(dxy)}{pct_str(dxy)}、EUR/USD は {format_value(eur_usd)}{pct_str(eur_usd)}。"
+        f"米10年債利回りは {format_value(us10)}、日本10年債利回りは {format_value(jp10)} で、"
+        "日米金利差がドル円の水準を左右する構図が続いている。"
     )
+    gold_dir = direction(gold)
+    oil_dir = direction(oil)
     paragraphs.append(
-        "商品市況では、金 "
-        f"{format_value(gold)}、WTI原油 {format_value(oil)}、銅 {format_value(copper)} "
-        "を中心に見ると、安全資産、エネルギー、景気敏感という異なる軸を同時に追えます。"
-        "金が強く、原油や銅が弱い局面なら慎重姿勢が強いと読みやすく、逆なら景気期待が支えになっている可能性があります。"
+        f"商品市況では、金が {format_value(gold)}{pct_str(gold)}と{gold_dir}。"
+        f"WTI原油は {format_value(oil)}{pct_str(oil)}と{oil_dir}し、"
+        f"銅は {format_value(copper)}{pct_str(copper)}だった。"
     )
+    btc_dir = direction(btc)
     paragraphs.append(
-        "暗号資産は、BTC/USD "
-        f"{format_value(btc)} と ETH/USD {format_value(eth)} を中心に、"
-        "伝統資産とは別のリスク選好の温度感を測る補助指標として扱っています。"
-        "株式が弱いのに暗号資産が底堅い場合は、投機資金の残存を示すことがあり、逆に同時安ならリスク回避色が強いと解釈しやすいです。"
+        f"暗号資産はビットコインが {format_value(btc)}{pct_str(btc)}と{btc_dir}、"
+        f"イーサリアムは {format_value(eth)}{pct_str(eth)}で推移した。"
     )
     return paragraphs
 
