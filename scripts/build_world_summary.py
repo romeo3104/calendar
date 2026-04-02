@@ -1556,116 +1556,148 @@ def find_header_index(header_map: Dict[str, int], aliases: List[str]) -> Optiona
     return None
 
 
-def parse_mof_jgb_rows(session: requests.Session) -> Dict[str, MarketRow]:
-    last_error = None
+def _parse_single_mof_csv(
+    session: requests.Session, url: str
+) -> Optional[Dict[str, Dict]]:
+    """単一の財務省CSVをパースし、latest/previous値を返す。失敗時はNone。"""
+    response = session.get(url, timeout=30)
+    response.raise_for_status()
+    text = decode_response_content(response)
+    reader = csv.reader(text.splitlines())
+    rows = [row for row in reader if row and any(cell.strip() for cell in row)]
+    if not rows:
+        raise ValueError("CSVが空です。")
 
+    header_row = None
+    header_row_idx = None
+    date_aliases = ["基準日", "Date"]
+    for ri, row in enumerate(rows):
+        for ci, cell in enumerate(row):
+            if normalize_header(cell) in {normalize_header(a) for a in date_aliases}:
+                header_row = row
+                header_row_idx = ri
+                break
+        if header_row is not None:
+            break
+    if header_row is None:
+        raise ValueError(f"ヘッダー行を検出できませんでした。 rows[0]={rows[0]}")
+    data_rows = rows[header_row_idx + 1:]
+    header_map = {normalize_header(cell): idx for idx, cell in enumerate(header_row)}
+
+    date_idx = find_header_index(header_map, ["基準日", "Date"])
+    idx_2 = find_header_index(header_map, ["2年", "2Year", "2Y"])
+    idx_5 = find_header_index(header_map, ["5年", "5Year", "5Y"])
+    idx_10 = find_header_index(header_map, ["10年", "10Year", "10Y"])
+    idx_30 = find_header_index(header_map, ["30年", "30Year", "30Y"])
+
+    if date_idx is None or idx_2 is None or idx_5 is None or idx_10 is None or idx_30 is None:
+        raise ValueError(f"必要列を検出できませんでした。 header={header_row}")
+
+    names = ("日本国債2年利回り", "日本国債5年利回り", "日本国債10年利回り", "日本国債30年利回り")
+    latest_values: Dict[str, Optional[Decimal]] = {n: None for n in names}
+    previous_values: Dict[str, Optional[Decimal]] = {n: None for n in names}
+    latest_dates: Dict[str, Optional[str]] = {n: None for n in names}
+    index_map = {
+        "日本国債2年利回り": idx_2,
+        "日本国債5年利回り": idx_5,
+        "日本国債10年利回り": idx_10,
+        "日本国債30年利回り": idx_30,
+    }
+
+    for row in reversed(data_rows):
+        for name, idx in index_map.items():
+            if idx >= len(row):
+                continue
+            value = parse_decimal(row[idx])
+            if value is None:
+                continue
+            if latest_values[name] is None:
+                latest_values[name] = value
+                latest_dates[name] = row[date_idx] if date_idx < len(row) else None
+            elif previous_values[name] is None:
+                previous_values[name] = value
+
+        if all(latest_values[name] is not None for name in names) and all(previous_values[name] is not None for name in names):
+            break
+
+    return {
+        "latest": latest_values,
+        "previous": previous_values,
+        "dates": latest_dates,
+    }
+
+
+def parse_mof_jgb_rows(session: requests.Session) -> Dict[str, MarketRow]:
+    names = ("日本国債2年利回り", "日本国債5年利回り", "日本国債10年利回り", "日本国債30年利回り")
+    # 各CSVからデータを収集（日本語CSVは最新1日のみ、英語CSVは全履歴）
+    parsed_results = []
+    last_error = None
     for url in MOF_JGB_CSV_URLS:
         try:
-            response = session.get(url, timeout=30)
-            response.raise_for_status()
-            text = decode_response_content(response)
-            reader = csv.reader(text.splitlines())
-            rows = [row for row in reader if row and any(cell.strip() for cell in row)]
-            if not rows:
-                raise ValueError("CSVが空です。")
-
-            # タイトル行をスキップし、実際のヘッダー行を検出
-            header_row = None
-            header_row_idx = None
-            date_aliases = ["基準日", "Date"]
-            for ri, row in enumerate(rows):
-                for ci, cell in enumerate(row):
-                    if normalize_header(cell) in {normalize_header(a) for a in date_aliases}:
-                        header_row = row
-                        header_row_idx = ri
-                        break
-                if header_row is not None:
-                    break
-            if header_row is None:
-                raise ValueError(f"ヘッダー行を検出できませんでした。 rows[0]={rows[0]}")
-            data_rows = rows[header_row_idx + 1:]
-            header_map = {normalize_header(cell): idx for idx, cell in enumerate(header_row)}
-
-            date_idx = find_header_index(header_map, ["基準日", "Date"])
-            idx_2 = find_header_index(header_map, ["2年", "2Year", "2Y"])
-            idx_5 = find_header_index(header_map, ["5年", "5Year", "5Y"])
-            idx_10 = find_header_index(header_map, ["10年", "10Year", "10Y"])
-            idx_30 = find_header_index(header_map, ["30年", "30Year", "30Y"])
-
-            if date_idx is None or idx_2 is None or idx_5 is None or idx_10 is None or idx_30 is None:
-                raise ValueError(f"必要列を検出できませんでした。 header={header_row}")
-
-            latest_values = {"日本国債2年利回り": None, "日本国債5年利回り": None, "日本国債10年利回り": None, "日本国債30年利回り": None}
-            previous_values = {"日本国債2年利回り": None, "日本国債5年利回り": None, "日本国債10年利回り": None, "日本国債30年利回り": None}
-            latest_dates = {"日本国債2年利回り": None, "日本国債5年利回り": None, "日本国債10年利回り": None, "日本国債30年利回り": None}
-            index_map = {
-                "日本国債2年利回り": idx_2,
-                "日本国債5年利回り": idx_5,
-                "日本国債10年利回り": idx_10,
-                "日本国債30年利回り": idx_30,
-            }
-
-            for row in reversed(data_rows):
-                for name, idx in index_map.items():
-                    if idx >= len(row):
-                        continue
-                    value = parse_decimal(row[idx])
-                    if value is None:
-                        continue
-                    if latest_values[name] is None:
-                        latest_values[name] = value
-                        latest_dates[name] = row[date_idx] if date_idx < len(row) else None
-                    elif previous_values[name] is None:
-                        previous_values[name] = value
-
-                if all(latest_values[name] is not None for name in latest_values) and all(previous_values[name] is not None for name in previous_values):
-                    break
-
-            result: Dict[str, MarketRow] = {}
-            for name in ("日本国債2年利回り", "日本国債5年利回り", "日本国債10年利回り", "日本国債30年利回り"):
-                current = latest_values[name]
-                previous = previous_values[name]
-                if current is None:
-                    result[name] = MarketRow(
-                        category="日本国債",
-                        name=name,
-                        value=None,
-                        previous=None,
-                        change=None,
-                        change_pct=None,
-                        source="財務省",
-                        acquired_at=None,
-                        suffix="%",
-                        missing_reason="財務省CSVの最新営業日データを検出できませんでした。",
-                    )
-                    continue
-
-                change = None if previous is None else current - previous
-                change_pct = None if previous in (None, 0) else (change / previous) * 100
-                result[name] = MarketRow(
-                    category="日本国債",
-                    name=name,
-                    value=current,
-                    previous=previous,
-                    change=change,
-                    change_pct=change_pct,
-                    source="財務省",
-                    acquired_at=latest_dates[name],
-                    suffix="%",
-                )
-            return result
-
+            parsed = _parse_single_mof_csv(session, url)
+            if parsed is not None:
+                parsed_results.append(parsed)
         except Exception as exc:
             LOGGER.exception("財務省JGB取得失敗: %s", url)
             last_error = exc
 
-    error_message = f"財務省取得失敗: {last_error}" if last_error else "財務省取得失敗"
-    return {
-        "日本国債2年利回り": MarketRow("日本国債", "日本国債2年利回り", None, None, None, None, "財務省", None, "%", missing_reason=error_message),
-        "日本国債5年利回り": MarketRow("日本国債", "日本国債5年利回り", None, None, None, None, "財務省", None, "%", missing_reason=error_message),
-        "日本国債10年利回り": MarketRow("日本国債", "日本国債10年利回り", None, None, None, None, "財務省", None, "%", missing_reason=error_message),
-        "日本国債30年利回り": MarketRow("日本国債", "日本国債30年利回り", None, None, None, None, "財務省", None, "%", missing_reason=error_message),
-    }
+    if not parsed_results:
+        error_message = f"財務省取得失敗: {last_error}" if last_error else "財務省取得失敗"
+        return {
+            n: MarketRow("日本国債", n, None, None, None, None, "財務省", None, "%", missing_reason=error_message)
+            for n in names
+        }
+
+    # 複数CSVの結果を統合: 最新値は最初に見つかったものを優先、前日値が欠けていれば後続CSVから補完
+    merged_latest: Dict[str, Optional[Decimal]] = {n: None for n in names}
+    merged_previous: Dict[str, Optional[Decimal]] = {n: None for n in names}
+    merged_dates: Dict[str, Optional[str]] = {n: None for n in names}
+
+    for parsed in parsed_results:
+        for name in names:
+            if merged_latest[name] is None and parsed["latest"][name] is not None:
+                merged_latest[name] = parsed["latest"][name]
+                merged_dates[name] = parsed["dates"][name]
+            if merged_previous[name] is None:
+                if parsed["previous"][name] is not None:
+                    merged_previous[name] = parsed["previous"][name]
+                elif merged_latest[name] is not None and parsed["latest"][name] is not None and parsed["latest"][name] != merged_latest[name]:
+                    # 別CSVの最新値が異なる日付のデータなら前日値として使える
+                    merged_previous[name] = parsed["latest"][name]
+
+    result: Dict[str, MarketRow] = {}
+    for name in names:
+        current = merged_latest[name]
+        previous = merged_previous[name]
+        if current is None:
+            result[name] = MarketRow(
+                category="日本国債",
+                name=name,
+                value=None,
+                previous=None,
+                change=None,
+                change_pct=None,
+                source="財務省",
+                acquired_at=None,
+                suffix="%",
+                missing_reason="財務省CSVの最新営業日データを検出できませんでした。",
+            )
+            continue
+
+        change = None if previous is None else current - previous
+        change_pct = None if previous in (None, 0) else (change / previous) * 100
+        result[name] = MarketRow(
+            category="日本国債",
+            name=name,
+            value=current,
+            previous=previous,
+            change=change,
+            change_pct=change_pct,
+            source="財務省",
+            acquired_at=merged_dates[name],
+            suffix="%",
+        )
+    return result
 
 
 def parse_first_float(text: str, pattern: str) -> Optional[float]:
