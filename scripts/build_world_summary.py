@@ -301,7 +301,7 @@ def should_run_now(force: bool) -> bool:
     if now_ny.hour != 16:
         return False
 
-    if not (10 <= now_ny.minute < 20):
+    if now_ny.minute < 10:
         return False
 
     return True
