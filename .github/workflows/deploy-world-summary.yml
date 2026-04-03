@@ -45,19 +45,11 @@ jobs:
         run: |
           python scripts/build_calendar.py
 
-      - name: 世界経済サマリー生成（push / 手動）
-        if: github.event_name != 'schedule'
+      - name: 世界経済サマリー生成
         env:
           TZ: Asia/Tokyo
         run: |
           python scripts/build_world_summary.py --force
-
-      - name: 世界経済サマリー生成（定期）
-        if: github.event_name == 'schedule'
-        env:
-          TZ: Asia/Tokyo
-        run: |
-          python scripts/build_world_summary.py
 
       - name: Pages 設定
         uses: actions/configure-pages@v5
