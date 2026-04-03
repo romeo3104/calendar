@@ -1,5 +1,7 @@
 # calendar
 
+https://romeo3104.github.io/calendar/
+
 GitHub Pages で公開する年カレンダーと、世界経済サマリーを生成する静的サイトです。
 
 このリポジトリは Python スクリプトで HTML と JSON を生成し、GitHub Actions で Pages へデプロイする構成です。カレンダーは 1990 年から 2050 年までの年ページを静的生成し、ブラウザ側で JST の現在日付を再判定して当日表示を維持します。
