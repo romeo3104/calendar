@@ -44,11 +44,13 @@ jobs:
         run: |
           python scripts/build_calendar.py
 
-      - name: 世界経済サマリー生成
-        env:
-          TZ: Asia/Tokyo
+      - name: 既存サマリーを保全
         run: |
-          python scripts/build_world_summary.py --force
+          mkdir -p dist/summary
+          BASE_URL="https://romeo3104.github.io/calendar/summary"
+          for f in latest.html latest.json; do
+            curl -fsSL "${BASE_URL}/${f}" -o "dist/summary/${f}" || true
+          done
 
       - name: Pages 設定
         uses: actions/configure-pages@v5
